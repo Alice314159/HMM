@@ -1,0 +1,564 @@
+import pandas as pd
+import numpy as np
+import os
+import pickle
+import yaml
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+from EnhancedFeatureEngineer import EnhancedFeatureEngineer, HMMFeatureProcessor
+from RobustHMMTrainer import RobustHMMTrainer
+from loguru import logger
+from ScalerManager import ScalerManager
+
+class ImprovedHMMPipeline:
+    """Improved HMM Training Pipeline following standard ML workflow"""
+    
+    def __init__(self, config_path: str):
+        # Load configuration file
+        if isinstance(config_path, str):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+        else:
+            self.config = config_path
+        
+        # Initialize feature processor
+        self.feature_processor = HMMFeatureProcessor(self.config['feature_engineer'])
+        self.feature_engineer = EnhancedFeatureEngineer(self.config['feature_engineer'])
+        
+        # Initialize scaler manager
+        scaler_config = self.config.get('scaler', {})
+        if isinstance(scaler_config, dict):
+            scaler_type = scaler_config.get('type', 'standard')
+        else:
+            scaler_type = 'standard'
+        self.scaler_manager = ScalerManager(scaler_type=scaler_type)
+        
+        # Initialize PCA
+        pca_config = self.config.get('pca', {})
+        self.pca = None
+        self.pca_variance_ratio = pca_config.get('variance_ratio', None)
+        self.pca_n_components = pca_config.get('n_components', None)
+        
+        # Initialize other components
+        self.hmm_trainer = None
+        self.hmm_model = None
+        
+        # Record processed feature information
+        self.feature_names = None
+        self.train_index = None
+        self.test_index = None
+        
+        # Training state records
+        self.train_states = None
+        self.train_metrics = None
+        
+        # Pipeline state
+        self.is_fitted = False
+
+    def split_data_by_time(self, df: pd.DataFrame, cutoff_date: str = '2025-01-01') -> tuple:
+        """Split data by time into training and testing sets"""
+        logger.info("Splitting data by time...")
+        
+        cutoff = pd.Timestamp(cutoff_date)
+        test_cutoff = pd.Timestamp(cutoff_date) - pd.Timedelta(days=45)
+        
+        train_df = df[df.index < cutoff].copy()
+        test_df = df[df.index >= test_cutoff].copy()
+        
+        logger.info(f"Training data: {len(train_df)} records ({train_df.index.min()} to {train_df.index.max()})")
+        logger.info(f"Testing data: {len(test_df)} records ({test_df.index.min()} to {test_df.index.max()})")
+        
+        return train_df, test_df
+
+    def compute_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Compute features from raw data"""
+        logger.info("Computing features...")
+        
+        # Check input data
+        if df is None or df.empty:
+            raise ValueError("Input data is empty")
+        
+        logger.info(f"Input data shape: {df.shape}")
+        logger.info(f"Input data columns: {df.columns.tolist()}")
+        
+        # Check required columns
+        required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+        
+        # Compute features
+        try:
+            df_features = self.feature_engineer._calculate_all_features(df)
+            
+            # Check feature calculation results
+            if df_features is None or df_features.empty:
+                raise ValueError("Feature calculation result is empty")
+            
+            logger.info(f"Computed features shape: {df_features.shape}")
+            logger.info(f"Feature columns: {df_features.columns.tolist()}")
+            
+            # Check for required features
+            required_features = ['Return', 'Log_Return', 'Price_Zscore']
+            missing_features = [feat for feat in required_features if feat not in df_features.columns]
+            if missing_features:
+                logger.warning(f"Missing required features: {missing_features}")
+                # Calculate missing features
+                if 'Return' not in df_features.columns:
+                    df_features['Return'] = df['Close'].pct_change()
+                if 'Log_Return' not in df_features.columns:
+                    df_features['Log_Return'] = np.log(df['Close']).diff()
+                if 'Price_Zscore' not in df_features.columns:
+                    mean = df['Close'].rolling(window=20).mean()
+                    std = df['Close'].rolling(window=20).std()
+                    df_features['Price_Zscore'] = (df['Close'] - mean) / (std + 1e-8)
+            
+            # Check for missing values
+            missing_values = df_features.isnull().sum()
+            if missing_values.any():
+                logger.warning(f"Missing values in features:\n{missing_values[missing_values > 0]}")
+                # drop missing values
+                df_features = df_features.dropna()
+                # df_features = df_features.fillna(method='ffill').fillna(method='bfill')
+                logger.info(f"Dropped {missing_values.sum()} missing values")
+            return df_features
+            
+        except Exception as e:
+            logger.error(f"Feature calculation failed: {str(e)}")
+            raise
+    
+    def normalize_data(self, df: pd.DataFrame) -> tuple:
+        """Normalize data using fitted scaler"""
+        logger.info("Normalizing data...")
+        
+        # Get feature names
+        feature_names = list(df.columns)
+        logger.info(f"Feature names: {feature_names}")
+        
+        # Fit and transform data
+        X_normalized = self.scaler_manager.fit_transform(df.values, feature_names)
+        
+        # Save scaler
+        os.makedirs('models', exist_ok=True)
+        self.scaler_manager.save('models/scaler.pkl')
+        
+        logger.info(f"Data normalized: {X_normalized.shape[0]} samples, {X_normalized.shape[1]} features")
+        return X_normalized, df.index
+    
+    def apply_pca(self, X: np.ndarray, is_training: bool = True) -> np.ndarray:
+        """Apply PCA transformation to the data
+        
+        Args:
+            X: Input data array
+            is_training: Whether this is training data (True) or test/validation/inference data (False)
+        
+        Returns:
+            Transformed data array
+        """
+        logger.info("Applying PCA transformation...")
+        logger.info(f"Input data shape: {X.shape}")
+        
+        # Check for NaN values
+        nan_count = np.isnan(X).sum()
+        if nan_count > 0:
+            logger.warning(f"Found {nan_count} NaN values in input data")
+            # Replace NaN with column means
+            col_means = np.nanmean(X, axis=0)
+            X = np.where(np.isnan(X), col_means, X)
+            logger.info("Replaced NaN values with column means")
+        
+        if is_training:
+            # For training data, fit and transform
+            if self.pca is None:
+                # Initialize PCA
+                if self.pca_variance_ratio is not None:
+                    self.pca = PCA(n_components=self.pca_variance_ratio, random_state=42)
+                elif self.pca_n_components is not None:
+                    self.pca = PCA(n_components=self.pca_n_components, random_state=42)
+                else:
+                    # Default to 95% variance ratio if no configuration provided
+                    self.pca = PCA(n_components=0.95, random_state=42)
+                
+                # Fit and transform
+                X_pca = self.pca.fit_transform(X)
+                logger.info(f"PCA fitted: {X.shape[1]} -> {self.pca.n_components_} dimensions")
+                logger.info(f"Explained variance ratio: {sum(self.pca.explained_variance_ratio_):.4f}")
+                
+                # Update feature names
+                self.feature_names = [f'PC{i+1}' for i in range(self.pca.n_components_)]
+                logger.info(f"PCA feature names: {self.feature_names}")
+            else:
+                # If PCA is already fitted, just transform
+                logger.info(f"Using fitted PCA with {self.pca.n_components_} components")
+                logger.info(f"Current feature names: {self.feature_names}")
+                X_pca = self.pca.transform(X)
+        else:
+            # For test/validation/inference data, only transform
+            if self.pca is None:
+                raise ValueError("PCA must be fitted before transforming test/validation/inference data")
+            logger.info(f"Transforming test data with fitted PCA ({self.pca.n_components_} components)")
+            logger.info(f"Current feature names: {self.feature_names}")
+            X_pca = self.pca.transform(X)
+            logger.info(f"Data transformed using fitted PCA: {X.shape[1]} -> {self.pca.n_components_} dimensions")
+        
+        return X_pca
+
+    def prepare_training_data(self, train_df: pd.DataFrame) -> tuple:
+        """Prepare training data by computing features and normalizing"""
+        logger.info("Preparing training data...")
+        
+        # Compute features and fit feature engineer
+        df_features = self.compute_features(train_df)
+        
+        # Ensure feature engineer is fitted
+        if not self.feature_engineer.is_fitted:
+            self.feature_engineer.fit(train_df)
+        
+        # Normalize data
+        X_normalized, train_index = self.normalize_data(df_features)
+        
+        # Apply PCA if configured (training mode)
+        if self.pca_variance_ratio is not None or self.pca_n_components is not None:
+            X_normalized = self.apply_pca(X_normalized, is_training=True)
+        
+        # Store feature names
+        if self.feature_names is None:
+            self.feature_names = list(df_features.columns)
+        self.train_index = train_index
+        
+        # Mark pipeline as fitted
+        self.is_fitted = True
+        
+        logger.info(f"Training data prepared: {X_normalized.shape[0]} samples, {X_normalized.shape[1]} features")
+        return X_normalized, self.feature_names, train_index
+    
+    def train_hmm_model(self, X_train: np.ndarray) -> None:
+        """Train HMM model on normalized training data"""
+        logger.info("Training HMM model...")
+        
+        self.hmm_trainer = RobustHMMTrainer(self.config['trainer'])
+        
+        # Train HMM model
+        self.hmm_model, self.train_states, self.train_metrics = self.hmm_trainer.train(X_train)
+        
+        # Mark pipeline as fitted
+        self.is_fitted = True
+        
+        logger.info("HMM model training completed")
+        logger.info(f"Model state count: {self.hmm_model.n_components}")
+        logger.info(f"Training data state distribution: {np.bincount(self.train_states)}")
+        logger.info(f"Training metrics: {self.train_metrics}")
+    
+    def prepare_test_data(self, test_df: pd.DataFrame) -> tuple:
+        """Prepare test data using fitted transformers"""
+        logger.info("Preparing test data...")
+        
+        if not self.scaler_manager.is_fitted:
+            raise ValueError("Scaler must be fitted first. Call normalize_data or prepare_training_data first.")
+        
+        # Compute features for test data
+        df_features = self.compute_features(test_df)
+        
+        # Transform test data using fitted scaler
+        X_test = self.scaler_manager.transform(df_features.values)
+        
+        # Apply PCA if fitted (inference mode)
+        if self.pca is not None:
+            X_test = self.apply_pca(X_test, is_training=False)
+        
+        test_index = df_features.index
+        self.test_index = test_index
+        
+        logger.info(f"Test data prepared: {X_test.shape[0]} samples, {X_test.shape[1]} features")
+        return X_test, test_index
+    
+    def predict_states(self, X_test: np.ndarray) -> np.ndarray:
+        """Predict states for test data"""
+        logger.info("Predicting states...")
+        
+        if self.hmm_model is None:
+            raise ValueError("HMM model not trained yet. Call train_hmm_model first.")
+        
+        # Predict test data states
+        test_states = self.hmm_model.predict(X_test)
+        
+        logger.info("State prediction completed")
+        logger.info(f"Test data state distribution: {np.bincount(test_states)}")
+        
+        return test_states
+    
+    def run_full_pipeline(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None, 
+                         cutoff_date: str = None) -> dict:
+        """Run the complete pipeline"""
+        logger.info("Running complete HMM pipeline...")
+        
+        results = {}
+        
+        # Prepare training data
+        X_train, feature_names, train_index = self.prepare_training_data(train_df)
+        results['X_train'] = X_train
+        results['train_index'] = train_index
+        results['feature_names'] = feature_names
+        
+        # Split data if needed
+        if test_df is None and cutoff_date is not None:
+            train_df, test_df = self.split_data_by_time(train_df, cutoff_date)
+            # Re-prepare training data after split
+            X_train, feature_names, train_index = self.prepare_training_data(train_df)
+            results['X_train'] = X_train
+            results['train_index'] = train_index
+        
+        # Train HMM
+        self.train_hmm_model(X_train)
+        results['train_states'] = self.train_states
+        results['train_metrics'] = self.train_metrics
+        
+        # Process test data if available
+        if test_df is not None:
+            X_test, test_index = self.prepare_test_data(test_df)
+            test_states = self.predict_states(X_test)
+            
+            results['X_test'] = X_test
+            results['test_index'] = test_index
+            results['test_states'] = test_states
+            
+            # Validation
+            validation_results = self.validate_pipeline_consistency(X_train, X_test)
+            results['validation'] = validation_results
+        
+        logger.info("Complete pipeline execution finished")
+        return results
+    
+    def predict_new_data(self, new_df: pd.DataFrame) -> tuple:
+        """Predict on completely new data (inference mode)"""
+        logger.info("Predicting on new data...")
+        
+        if not self.is_fitted:
+            raise ValueError("Pipeline must be trained first")
+        
+        # Prepare new data
+        X_new, new_index = self.prepare_test_data(new_df)
+        
+        # Predict states
+        new_states = self.predict_states(X_new)
+        
+        logger.info(f"New data prediction completed: {len(new_states)} predictions")
+        
+        return new_states, new_index
+    
+    def save_pipeline(self, save_path: str) -> None:
+        """Save complete processing pipeline"""
+        logger.info(f"Saving pipeline to: {save_path}")
+        
+        if not self.is_fitted:
+            raise ValueError("Pipeline must be fitted before saving. Call prepare_training_data first.")
+        
+        os.makedirs(save_path, exist_ok=True)
+        
+        # Save feature processor
+        feature_processor_path = os.path.join(save_path, 'feature_processor.pkl')
+        if self.feature_engineer.is_fitted:
+            self.feature_engineer.save_pipeline(feature_processor_path)
+        else:
+            logger.warning("Feature engineer not fitted, skipping feature processor save")
+        
+        # Save scaler
+        scaler_path = os.path.join(save_path, 'scaler.pkl')
+        self.scaler_manager.save(scaler_path)
+        
+        # Save PCA
+        if self.pca is not None:
+            pca_path = os.path.join(save_path, 'pca.pkl')
+            with open(pca_path, 'wb') as f:
+                pickle.dump(self.pca, f)
+        
+        # Save pipeline metadata
+        pipeline_data = {
+            'config': self.config,
+            'feature_names': self.feature_names,
+            'train_states': self.train_states,
+            'train_metrics': self.train_metrics,
+            'is_fitted': self.is_fitted,
+            'train_index': self.train_index,
+            'test_index': self.test_index,
+            'pca_variance_ratio': self.pca_variance_ratio,
+            'pca_n_components': self.pca_n_components
+        }
+        
+        # Save main pipeline data
+        with open(os.path.join(save_path, 'pipeline_data.pkl'), 'wb') as f:
+            pickle.dump(pipeline_data, f)
+        
+        # Save HMM model
+        if self.hmm_model is not None:
+            with open(os.path.join(save_path, 'hmm_model.pkl'), 'wb') as f:
+                pickle.dump(self.hmm_model, f)
+        
+        # Save HMM trainer
+        if self.hmm_trainer is not None:
+            with open(os.path.join(save_path, 'hmm_trainer.pkl'), 'wb') as f:
+                pickle.dump(self.hmm_trainer, f)
+        
+        logger.info("✓ Pipeline saved successfully")
+    
+    def load_pipeline(self, load_path: str) -> None:
+        """Load complete processing pipeline"""
+        logger.info(f"Loading pipeline from {load_path}")
+        
+        # Load feature processor
+        feature_processor_path = os.path.join(load_path, 'feature_processor.pkl')
+        if os.path.exists(feature_processor_path):
+            self.feature_engineer.load_pipeline(feature_processor_path)
+        else:
+            logger.warning("Feature processor file not found")
+        
+        # Load scaler
+        scaler_path = os.path.join(load_path, 'scaler.pkl')
+        if os.path.exists(scaler_path):
+            self.scaler_manager.load(scaler_path)
+        else:
+            logger.warning("Scaler file not found")
+        
+        # Load PCA
+        pca_path = os.path.join(load_path, 'pca.pkl')
+        if os.path.exists(pca_path):
+            with open(pca_path, 'rb') as f:
+                self.pca = pickle.load(f)
+        else:
+            logger.warning("PCA file not found")
+        
+        # Load main pipeline data
+        pipeline_data_path = os.path.join(load_path, 'pipeline_data.pkl')
+        if os.path.exists(pipeline_data_path):
+            with open(pipeline_data_path, 'rb') as f:
+                pipeline_data = pickle.load(f)
+            
+            self.config = pipeline_data['config']
+            self.feature_names = pipeline_data['feature_names']
+            self.train_states = pipeline_data['train_states']
+            self.train_metrics = pipeline_data.get('train_metrics')
+            self.is_fitted = pipeline_data.get('is_fitted', False)
+            self.train_index = pipeline_data.get('train_index')
+            self.test_index = pipeline_data.get('test_index')
+            self.pca_variance_ratio = pipeline_data.get('pca_variance_ratio')
+            self.pca_n_components = pipeline_data.get('pca_n_components')
+        
+        # Load HMM model
+        hmm_model_path = os.path.join(load_path, 'hmm_model.pkl')
+        if os.path.exists(hmm_model_path):
+            with open(hmm_model_path, 'rb') as f:
+                self.hmm_model = pickle.load(f)
+        
+        # Load HMM trainer
+        hmm_trainer_path = os.path.join(load_path, 'hmm_trainer.pkl')
+        if os.path.exists(hmm_trainer_path):
+            with open(hmm_trainer_path, 'rb') as f:
+                self.hmm_trainer = pickle.load(f)
+        
+        logger.info("✓ Pipeline loaded successfully")
+    
+    def validate_pipeline_consistency(self, X_train: np.ndarray, X_test: np.ndarray) -> dict:
+        """Validate consistency between training and test data processing"""
+        logger.info("Validating data processing consistency...")
+        
+        validation_result = {
+            'train_shape': X_train.shape,
+            'test_shape': X_test.shape,
+            'shape_match': X_train.shape[1] == X_test.shape[1],
+            'feature_count_match': len(self.feature_names) if self.feature_names else 0,
+            'feature_names_match': True  # Default to True
+        }
+        
+        # Check feature names consistency
+        if self.feature_names:
+            validation_result['feature_names_match'] = (
+                len(self.feature_names) == X_train.shape[1] and 
+                len(self.feature_names) == X_test.shape[1]
+            )
+        
+        # Statistical characteristics check
+        if validation_result['shape_match']:
+            train_mean = np.mean(X_train, axis=0)
+            test_mean = np.mean(X_test, axis=0)
+            train_std = np.std(X_train, axis=0)
+            test_std = np.std(X_test, axis=0)
+            
+            mean_diff = np.abs(train_mean - test_mean)
+            std_ratio = test_std / (train_std + 1e-8)
+            
+            validation_result['statistics_check'] = {
+                'mean_difference': mean_diff,
+                'std_ratio': std_ratio,
+                'reasonable_mean_diff': np.all(mean_diff < 2.0),
+                'reasonable_std_ratio': np.all((std_ratio > 0.5) & (std_ratio < 2.0))
+            }
+            
+            logger.info(f"Shape validation: {'✓' if validation_result['shape_match'] else '✗'}")
+            logger.info(f"Feature names validation: {'✓' if validation_result['feature_names_match'] else '✗'}")
+            if 'statistics_check' in validation_result:
+                stats_check = validation_result['statistics_check']
+                logger.info(f"Mean difference validation: {'✓' if stats_check['reasonable_mean_diff'] else '✗'}")
+                logger.info(f"Std ratio validation: {'✓' if stats_check['reasonable_std_ratio'] else '✗'}")
+        
+        return validation_result
+    
+    def get_feature_importance(self) -> dict:
+        """Get feature importance information"""
+        if not self.is_fitted:
+            raise ValueError("Pipeline must be fitted first")
+        
+        importance_info = {
+            'feature_names': self.feature_names,
+            'n_features': len(self.feature_names) if self.feature_names else 0,
+            'n_states': self.hmm_model.n_components if self.hmm_model else 0,
+            'train_state_distribution': np.bincount(self.train_states) if self.train_states is not None else None
+        }
+        
+        # Get PCA explained variance if available
+        if self.feature_processor.feature_engineer.pca is not None:
+            importance_info['pca_explained_variance'] = self.feature_processor.feature_engineer.pca.explained_variance_ratio_
+            importance_info['pca_cumulative_variance'] = np.cumsum(importance_info['pca_explained_variance'])
+        
+        return importance_info
+    
+    def generate_report(self) -> dict:
+        """Generate comprehensive pipeline report"""
+        if not self.is_fitted:
+            raise ValueError("Pipeline must be fitted first")
+        
+        report = {
+            'pipeline_status': 'fitted',
+            'config': self.config,
+            'feature_info': self.get_feature_importance(),
+            'model_info': {
+                'n_states': self.hmm_model.n_components if self.hmm_model else 0,
+                'train_metrics': self.train_metrics
+            },
+            'data_info': {
+                'train_samples': len(self.train_index) if self.train_index is not None else 0,
+                'test_samples': len(self.test_index) if self.test_index is not None else 0,
+                'train_date_range': (self.train_index.min(), self.train_index.max()) if self.train_index is not None else None,
+                'test_date_range': (self.test_index.min(), self.test_index.max()) if self.test_index is not None else None
+            }
+        }
+        
+        return report
+
+    
+    def _generate_metrics_table(self, metrics: dict) -> str:
+        """Generate HTML table rows for metrics"""
+        if not metrics:
+            return "<tr><td>No metrics available</td></tr>"
+        
+        rows = []
+        for metric, value in metrics.items():
+            rows.append(f"<tr><th>{metric}</th><td>{value:.4f}</td></tr>")
+        return "\n".join(rows)
+    
+    def _format_config(self, config: dict) -> str:
+        """Format configuration dictionary for HTML display"""
+        import json
+        return json.dumps(config, indent=2)
+
