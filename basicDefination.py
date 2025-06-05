@@ -75,10 +75,38 @@ class ColumnNames:
     MOMENTUM = 'momentum'
     ROC = 'roc'
     RSI = 'rsi'
+    MACD = 'macd'
+    MACD_SIGNAL = 'macd_signal'
+    MACD_HIST = 'macd_hist'
+    KDJ_K = 'kdj_k'
+    KDJ_D = 'kdj_d'
+    KDJ_J = 'kdj_j'
+    BB_WIDTH = 'bb_width'
+    
+    # 趋势指标列名
+    ADX = 'adx'
+    MA_SLOPE = 'ma_slope'
+    
+    # 价差/结构指标列名
+    HL_SPREAD = 'hl_spread'
+    OC_SPREAD = 'oc_spread'
+    OHLC_CENTER = 'ohlc_center'
+    CLOSE_ZSCORE = 'close_zscore'
+    
+    # 成交量指标列名
+    VOLUME_STD = 'volume_std'
+    VOLUME_ZSCORE = 'volume_zscore'
+    
+    # 结构稳定性指标列名
+    MA_SLOPE_RATIO = 'ma_slope_ratio'
+    PRICE_MA_CORR = 'price_ma_corr'
     
     # 波动率特征列名
     VOLATILITY_WINDOWS = [5, 10, 20, 60]
     REALIZED_VOL_WINDOWS = [5, 10, 20, 60]
+    BB_WINDOWS = [20, 50]
+    MA_WINDOWS = [5, 10, 20, 60]
+    VOLUME_WINDOWS = [5, 10, 20]
     
     @classmethod
     def get_volatility_column(cls, window: int) -> str:
@@ -110,6 +138,26 @@ class ColumnNames:
     def get_rsi_column(cls, window: int) -> str:
         """获取RSI列名"""
         return f"{cls.RSI}_{window}"
+        
+    @classmethod
+    def get_bb_width_column(cls, window: int) -> str:
+        """获取布林带宽度列名"""
+        return f"{cls.BB_WIDTH}_{window}"
+        
+    @classmethod
+    def get_ma_slope_column(cls, window: int) -> str:
+        """获取MA斜率列名"""
+        return f"{cls.MA_SLOPE}_{window}"
+        
+    @classmethod
+    def get_volume_std_column(cls, window: int) -> str:
+        """获取成交量标准差列名"""
+        return f"{cls.VOLUME_STD}_{window}"
+        
+    @classmethod
+    def get_price_ma_corr_column(cls, window: int) -> str:
+        """获取价格与MA相关性列名"""
+        return f"{cls.PRICE_MA_CORR}_{window}"
 
 # =============================================================================
 # 市场状态定义

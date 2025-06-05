@@ -116,13 +116,30 @@ class ImprovedHMMPipeline:
                     df_features['Price_Zscore'] = (df['Close'] - mean) / (std + 1e-8)
             
             # Check for missing values
+            #df_features.to_csv('df_features.csv')
             missing_values = df_features.isnull().sum()
             if missing_values.any():
                 logger.warning(f"Missing values in features:\n{missing_values[missing_values > 0]}")
-                # drop missing values
-                df_features = df_features.dropna()
-                # df_features = df_features.fillna(method='ffill').fillna(method='bfill')
-                logger.info(f"Dropped {missing_values.sum()} missing values")
+                
+                # 1. 首先尝试使用前向填充
+                df_features = df_features.fillna(method='ffill')
+                
+                # 2. 对于剩余的缺失值，使用后向填充
+                df_features = df_features.fillna(method='bfill')
+                
+                # 3. 对于仍然存在的缺失值（比如序列开始或结束处的值），使用列的中位数填充
+                df_features = df_features.fillna(df_features.median())
+                
+                # 4. 如果某列全部为缺失值，则使用0填充
+                df_features = df_features.fillna(0)
+                
+                # 记录处理结果
+                remaining_missing = df_features.isnull().sum().sum()
+                if remaining_missing > 0:
+                    logger.warning(f"Still have {remaining_missing} missing values after filling")
+                else:
+                    logger.info("Successfully filled all missing values")
+            
             return df_features
             
         except Exception as e:
@@ -133,19 +150,73 @@ class ImprovedHMMPipeline:
         """Normalize data using fitted scaler"""
         logger.info("Normalizing data...")
         
-        # Get feature names
+        # 1. 验证输入数据
+        if df is None or df.empty:
+            raise ValueError("Input DataFrame is empty or None")
+        
+        logger.info(f"Input data shape: {df.shape}")
+        
+        # 2. 检查数据是否包含任何有效值
+        if df.size == 0:
+            raise ValueError("Input data contains no values")
+        
+        # 3. 检查是否所有列都是数值型
+        non_numeric_cols = df.select_dtypes(exclude=['number']).columns
+        if len(non_numeric_cols) > 0:
+            logger.warning(f"Found non-numeric columns: {non_numeric_cols}")
+            df = df.select_dtypes(include=['number'])
+        
+        # 4. 获取特征名称
         feature_names = list(df.columns)
+        if not feature_names:
+            raise ValueError("No valid feature columns found")
+        
         logger.info(f"Feature names: {feature_names}")
         
-        # Fit and transform data
-        X_normalized = self.scaler_manager.fit_transform(df.values, feature_names)
+        # 5. 检查数据中是否存在 NaN 或无穷值
+        nan_count = df.isna().sum().sum()
+        inf_count = np.isinf(df.values).sum()
+        if nan_count > 0 or inf_count > 0:
+            logger.warning(f"Found {nan_count} NaN values and {inf_count} infinite values")
+            # 使用前向填充处理 NaN
+            df = df.fillna(method='ffill')
+            # 使用后向填充处理剩余的 NaN
+            df = df.fillna(method='bfill')
+            # 使用 0 填充任何剩余的 NaN
+            df = df.fillna(0)
+            # 处理无穷值
+            df = df.replace([np.inf, -np.inf], 0)
         
-        # Save scaler
-        os.makedirs('models', exist_ok=True)
-        self.scaler_manager.save('models/scaler.pkl')
+        # 6. 验证数据是否仍然为空
+        if df.empty:
+            raise ValueError("Data is empty after cleaning")
         
-        logger.info(f"Data normalized: {X_normalized.shape[0]} samples, {X_normalized.shape[1]} features")
-        return X_normalized, df.index
+        # 7. 获取数据值并验证
+        X = df.values
+        if X.size == 0:
+            raise ValueError("Data array is empty after conversion")
+        
+        logger.info(f"Data shape before normalization: {X.shape}")
+        
+        try:
+            # 8. 应用标准化
+            X_normalized = self.scaler_manager.fit_transform(X, feature_names)
+            
+            # 9. 验证标准化结果
+            if X_normalized.size == 0:
+                raise ValueError("Normalized data is empty")
+            
+            logger.info(f"Data normalized: {X_normalized.shape[0]} samples, {X_normalized.shape[1]} features")
+            
+            # 10. 保存 scaler
+            os.makedirs('models', exist_ok=True)
+            self.scaler_manager.save('models/scaler.pkl')
+            
+            return X_normalized, df.index
+            
+        except Exception as e:
+            logger.error(f"Data normalization failed: {str(e)}")
+            raise
     
     def apply_pca(self, X: np.ndarray, is_training: bool = True) -> np.ndarray:
         """Apply PCA transformation to the data
@@ -160,15 +231,83 @@ class ImprovedHMMPipeline:
         logger.info("Applying PCA transformation...")
         logger.info(f"Input data shape: {X.shape}")
         
-        # Check for NaN values
+        # 1. 检查并处理 NaN 值
         nan_count = np.isnan(X).sum()
         if nan_count > 0:
             logger.warning(f"Found {nan_count} NaN values in input data")
-            # Replace NaN with column means
+            
+            # 计算每列的统计量
             col_means = np.nanmean(X, axis=0)
-            X = np.where(np.isnan(X), col_means, X)
-            logger.info("Replaced NaN values with column means")
+            col_medians = np.nanmedian(X, axis=0)
+            col_stds = np.nanstd(X, axis=0)
+            
+            # 对每列分别处理
+            for col in range(X.shape[1]):
+                # 获取当前列的 NaN 位置
+                nan_mask = np.isnan(X[:, col])
+                if nan_mask.any():
+                    # 如果标准差接近0，使用中位数填充
+                    if col_stds[col] < 1e-8:
+                        X[nan_mask, col] = col_medians[col]
+                    else:
+                        # 否则使用均值填充
+                        X[nan_mask, col] = col_means[col]
+            
+            logger.info("Replaced NaN values with appropriate statistics")
         
+        # 2. 检查并处理无穷值
+        inf_count = np.isinf(X).sum()
+        if inf_count > 0:
+            logger.warning(f"Found {inf_count} infinite values in input data")
+            
+            # 对每列分别处理
+            for col in range(X.shape[1]):
+                # 获取当前列的无穷值位置
+                inf_mask = np.isinf(X[:, col])
+                if inf_mask.any():
+                    # 使用该列的最大/最小值替换无穷值
+                    col_max = np.nanmax(X[~inf_mask, col])
+                    col_min = np.nanmin(X[~inf_mask, col])
+                    X[inf_mask & (X[:, col] > 0), col] = col_max
+                    X[inf_mask & (X[:, col] < 0), col] = col_min
+            
+            logger.info("Replaced infinite values with column max/min")
+        
+        # 3. 再次检查并处理任何剩余的 NaN 或无穷值
+        if np.isnan(X).any() or np.isinf(X).any():
+            logger.warning("Found remaining NaN or infinite values after initial cleaning")
+            
+            # 使用更保守的方法处理
+            for col in range(X.shape[1]):
+                # 获取非 NaN 和非无穷值的索引
+                valid_mask = ~(np.isnan(X[:, col]) | np.isinf(X[:, col]))
+                if valid_mask.any():
+                    # 使用有效值的统计量
+                    valid_values = X[valid_mask, col]
+                    col_mean = np.mean(valid_values)
+                    col_std = np.std(valid_values)
+                    
+                    # 替换无效值
+                    invalid_mask = ~valid_mask
+                    if col_std < 1e-8:
+                        X[invalid_mask, col] = col_mean
+                    else:
+                        # 使用均值加上一个小的随机扰动
+                        X[invalid_mask, col] = col_mean + np.random.normal(0, col_std * 0.1, size=invalid_mask.sum())
+                else:
+                    # 如果列全为无效值，使用0填充
+                    X[:, col] = 0
+            
+            logger.info("Applied conservative cleaning for remaining invalid values")
+        
+        # 4. 最终检查
+        if np.isnan(X).any() or np.isinf(X).any():
+            logger.error("Data still contains invalid values after all cleaning attempts")
+            logger.error(f"NaN count: {np.isnan(X).sum()}")
+            logger.error(f"Inf count: {np.isinf(X).sum()}")
+            raise ValueError("Data still contains NaN or infinite values after cleaning")
+        
+        # 5. 应用 PCA
         if is_training:
             # For training data, fit and transform
             if self.pca is None:

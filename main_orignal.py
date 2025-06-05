@@ -13,6 +13,7 @@ warnings.filterwarnings('ignore')
 from IntelligentStateAnalyzer import IntelligentStateAnalyzer
 from optimizedDataLoader import OptimizedDataLoader
 from ImprovedHmmPipeLine import ImprovedHMMPipeline
+from EnhancedHMMOptimizer import EnhancedHMMOptimizer
 
 def create_directories():
     """创建必要的目录"""
@@ -61,7 +62,7 @@ def train_model(config_path: str = "src/HMM/config.yaml"):
         
         # 步骤2: 训练scalar计算,并保存scaler，返回scalar计算后的数据和index
         X_train, train_index = pipeline.normalize_data(featured_df)
-
+        
         # 步骤3: 拟合PCA
         X_train_processed = pipeline.apply_pca(X_train)
         
@@ -121,34 +122,55 @@ def predict_with_model(config_path: str = "src/HMM/config.yaml",
         loader = OptimizedDataLoader()
         original_df = loader.load_data(pipeline.config['data_path'])
         
-        # 保存Close列
-        test_close = original_df['Close'].copy()
+        # 按时间分割数据
+        logger.info("按时间分割数据...")
+        _, test_df_raw = pipeline.split_data_by_time(original_df)
+        
+        # 保存原始数据的完整副本（包含所有列）
+        test_df_original = test_df_raw.copy()
         
         # 计算特征
-        featured_df = pipeline.compute_features(original_df)
+        featured_test_df = pipeline.compute_features(test_df_raw)
         
         # 获取特征名称
-        feature_names = featured_df.columns.tolist()
-        pipeline.processed_feature_names = feature_names
-        
-        # 按时间分割数据
-        _, test_df = pipeline.split_data_by_time(featured_df)
-        
-        
+        feature_names = featured_test_df.columns.tolist()
         
         # 对测试数据进行预处理
-        X_test, test_index = pipeline.normalize_data(test_df)
+        X_test, test_index = pipeline.normalize_data(featured_test_df)
+        
+        logger.info(f"X_test: {X_test.shape}")
+        
+        # 使用与训练时相同的特征选择
+        logger.info("应用特征选择...")
+        optimizer = EnhancedHMMOptimizer()
+        feature_selection_results = optimizer.comprehensive_feature_selection(
+            X_test,
+            test_df_original['Close'].values,  # 使用测试集的收盘价作为目标变量
+            feature_names
+        )
+        
+        # 获取选中的特征
+        selected_features = feature_selection_results['selected_features']
+        logger.info(f"选中的特征数量: {len(selected_features)}")
+        logger.info(f"选中的特征: {selected_features}")
+        
+        # 使用选中的特征
+        X_test_selected = X_test[:, [feature_names.index(f) for f in selected_features]]
         
         # 应用PCA转换
-        X_test_processed = pipeline.apply_pca(X_test)
+        X_test_processed = pipeline.apply_pca(X_test_selected)
         
         # 预测测试数据
         test_states = pipeline.predict_states(X_test_processed)
-
-        # # 恢复Close列
-        test_df['Close'] = test_close
         
-        return test_states, test_index, test_df, X_test_processed
+        # 将预测的状态添加到完整数据中
+        if len(test_states) == len(test_index):
+            # 创建状态Series，使用正确的索引
+            states_series = pd.Series(test_states, index=test_index, name='HMM_State')
+            # 将状态添加到完整数据中
+            test_df_original = test_df_original.join(states_series, how='left')
+        
+        return test_states, test_index, test_df_original, X_test_processed
         
     except Exception as e:
         logger.error(f"预测过程失败: {e}")
@@ -245,39 +267,45 @@ def train_model_improved(config_path: str = "src/HMM/config.yaml"):
         # 获取特征名称
         feature_names = featured_train_df.columns.tolist()
         
-        # 检查是否包含原始价格信息
-        original_price_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-        missing_original_cols = [col for col in original_price_cols 
-                               if col not in featured_train_df.columns]
-        
-        if missing_original_cols:
-            logger.warning(f"以下原始列在特征计算后丢失: {missing_original_cols}")
-            
-            # 选择性添加重要的原始特征
-            # 添加标准化的收益率作为特征
-            if 'Close' not in featured_train_df.columns:
-                featured_train_df['Return'] = train_df_original['Close'].pct_change()
-                featured_train_df['Log_Return'] = np.log(train_df_original['Close']).diff()
-                
-            # 添加相对价格位置（标准化后的价格）
-            if 'Close' not in featured_train_df.columns:
-                close_rolling_mean = train_df_original['Close'].rolling(20).mean()
-                close_rolling_std = train_df_original['Close'].rolling(20).std()
-                featured_train_df['Price_Zscore'] = (
-                    (train_df_original['Close'] - close_rolling_mean) / close_rolling_std
-                )
-        
         # 步骤2: 数据标准化
         X_train, train_index = pipeline.normalize_data(featured_train_df)
+        np.savetxt('X_train.csv', X_train, delimiter=',')
+
+        logger.info(f"X_train: {X_train.shape}")
+
+        # 步骤3: 特征选择
+        logger_seperator("特征选择")
+        optimizer = EnhancedHMMOptimizer()
+        feature_selection_results = optimizer.comprehensive_feature_selection(
+            X_train, 
+            train_df_original['Close'].values,  # 使用收盘价作为目标变量
+            feature_names
+        )
         
-        # 步骤3: PCA降维
-        X_train_processed = pipeline.apply_pca(X_train)
+        # 获取选中的特征
+        selected_features = feature_selection_results['selected_features']
+        logger.info(f"选中的特征数量: {len(selected_features)}")
+        logger.info(f"选中的特征: {selected_features}")
+        
+        # 使用选中的特征
+        X_train_selected = X_train[:, [feature_names.index(f) for f in selected_features]]
+        
+        # 步骤4: PCA降维
+        X_train_processed = pipeline.apply_pca(X_train_selected)
         
         # 存储处理后的特征名称
-        pipeline.processed_feature_names = feature_names
+        pipeline.processed_feature_names = selected_features
         
-        # 步骤4: 训练HMM模型
+        # 步骤5: 训练HMM模型
         pipeline.train_hmm_model(X_train_processed)
+        
+        # 生成发射矩阵报告
+        logger.info("\n生成发射矩阵分析报告...")
+        optimizer.generate_emission_matrix_report(
+            pipeline.hmm_model,
+            pipeline.processed_feature_names,
+            'output/emission_matrix_report.html'
+        )
         
         # 创建完整的训练数据集（包含原始数据和状态）
         complete_train_df = train_df_original.copy()
