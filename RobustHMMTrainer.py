@@ -22,7 +22,7 @@ class RobustHMMTrainer:
     
     def __init__(self, config: Dict):
         self.n_states = config.get('n_states', 6)
-        self.max_attempts = 5
+        self.max_attempts = 20
         self.random_state = 42
         self.k_range = config.get('k_range', range(5, 41, 5))
         self.state_range = config.get('state_range', range(2, 11))  # 状态数范围

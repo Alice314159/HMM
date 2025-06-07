@@ -41,7 +41,7 @@ def train_model(config_path: str = "src/HMM/config.yaml"):
     # 加载原始数据
     logger.info("加载原始数据...")
     loader = OptimizedDataLoader()
-    original_df = loader.load_data(pipeline.config['data_path'])
+    original_df = loader.load_data(pipeline.config['data']['path'])
 
     try:
                
@@ -106,9 +106,15 @@ def train_model(config_path: str = "src/HMM/config.yaml"):
 
 
 
-def predict_with_model(config_path: str = "src/HMM/config.yaml", 
+def predict_with_model(config_path: str = "config.yaml", 
                       pipeline_path: str = "models/hmm_pipeline"):
-    """使用训练好的模型进行预测"""
+    """
+    使用训练好的模型进行预测
+    
+    参数:
+    - config_path: 配置文件路径
+    - pipeline_path: 训练好的流水线路径
+    """
     try:
         # 初始化流水线
         pipeline = ImprovedHMMPipeline(config_path)
@@ -120,7 +126,7 @@ def predict_with_model(config_path: str = "src/HMM/config.yaml",
         # 加载原始数据
         logger.info("加载原始数据...")
         loader = OptimizedDataLoader()
-        original_df = loader.load_data(pipeline.config['data_path'])
+        original_df = loader.load_data(pipeline.config['data']['path'])
         
         # 按时间分割数据
         logger.info("按时间分割数据...")
@@ -132,33 +138,62 @@ def predict_with_model(config_path: str = "src/HMM/config.yaml",
         # 计算特征
         featured_test_df = pipeline.compute_features(test_df_raw)
         
-        # 获取特征名称
-        feature_names = featured_test_df.columns.tolist()
+        # 从配置文件获取特征选择设置
+        use_manual_features = pipeline.config['use_manual_features']
+        
+        if use_manual_features:
+            # 使用手动配置的特征集
+            logger.info("使用手动配置的特征集...")
+            hmm_features = pipeline.config['manual_features']
+            
+            # 检查特征是否存在
+            available_features = [f for f in hmm_features if f in featured_test_df.columns]
+            missing_features = [f for f in hmm_features if f not in featured_test_df.columns]
+            
+            if missing_features:
+                logger.warning(f"以下特征在数据中不存在: {missing_features}")
+            
+            logger.info(f"使用 {len(available_features)} 个手动配置的特征进行预测")
+            logger.info(f"选中的特征: {available_features}")
+            
+            # 只使用选定的特征
+            featured_test_df = featured_test_df[available_features]
+            
+        else:
+            # 使用自动特征选择
+            logger.info("使用自动特征选择...")
+            # 获取特征名称
+            feature_names = featured_test_df.columns.tolist()
+            
+            # 对测试数据进行预处理
+            X_test, test_index = pipeline.normalize_data(featured_test_df)
+            
+            # 使用与训练时相同的特征选择
+            logger.info("应用特征选择...")
+            optimizer = EnhancedHMMOptimizer()
+            feature_selection_results = optimizer.comprehensive_feature_selection(
+                X_test,
+                test_df_original['Close'].values,  # 使用测试集的收盘价作为目标变量
+                feature_names,
+                n_features=pipeline.config['feature_selection_config']['n_features']
+            )
+            
+            # 获取选中的特征
+            selected_features = feature_selection_results['selected_features']
+            logger.info(f"自动选择的特征数量: {len(selected_features)}")
+            logger.info(f"选中的特征: {selected_features}")
+            
+            # 使用选中的特征
+            X_test_selected = X_test[:, [feature_names.index(f) for f in selected_features]]
+            featured_test_df = featured_test_df[selected_features]
         
         # 对测试数据进行预处理
         X_test, test_index = pipeline.normalize_data(featured_test_df)
         
         logger.info(f"X_test: {X_test.shape}")
         
-        # 使用与训练时相同的特征选择
-        logger.info("应用特征选择...")
-        optimizer = EnhancedHMMOptimizer()
-        feature_selection_results = optimizer.comprehensive_feature_selection(
-            X_test,
-            test_df_original['Close'].values,  # 使用测试集的收盘价作为目标变量
-            feature_names
-        )
-        
-        # 获取选中的特征
-        selected_features = feature_selection_results['selected_features']
-        logger.info(f"选中的特征数量: {len(selected_features)}")
-        logger.info(f"选中的特征: {selected_features}")
-        
-        # 使用选中的特征
-        X_test_selected = X_test[:, [feature_names.index(f) for f in selected_features]]
-        
         # 应用PCA转换
-        X_test_processed = pipeline.apply_pca(X_test_selected)
+        X_test_processed = pipeline.apply_pca(X_test)
         
         # 预测测试数据
         test_states = pipeline.predict_states(X_test_processed)
@@ -230,8 +265,13 @@ def load_and_predict_new_data(pipeline_path: str, new_data_path: str) -> np.ndar
     return predictions, data_index
 
 
-def train_model_improved(config_path: str = "src/HMM/config.yaml"):
-    """改进的HMM模型训练流程"""
+def train_model_improved(config_path: str = "config.yaml"):
+    """
+    改进的HMM模型训练流程
+    
+    参数:
+    - config_path: 配置文件路径
+    """
     # 创建必要目录
     create_directories()
     
@@ -243,7 +283,7 @@ def train_model_improved(config_path: str = "src/HMM/config.yaml"):
     # 加载原始数据
     logger.info("加载原始数据...")
     loader = OptimizedDataLoader()
-    original_df = loader.load_data(pipeline.config['data_path'])
+    original_df = loader.load_data(pipeline.config['data']['path'])
     
     try:
         # 步骤0: 按时间分割数据
@@ -261,50 +301,82 @@ def train_model_improved(config_path: str = "src/HMM/config.yaml"):
         logger_seperator("特征计算")
         featured_train_df = pipeline.compute_features(train_df_raw)
         
+        # 从配置文件获取特征选择设置
+        use_manual_features = pipeline.config['use_manual_features']
+        
+        if use_manual_features:
+            # 使用手动配置的特征集
+            logger.info("使用手动配置的特征集...")
+            hmm_features = pipeline.config['manual_features']
+            
+            # 检查特征是否存在
+            available_features = [f for f in hmm_features if f in featured_train_df.columns]
+            missing_features = [f for f in hmm_features if f not in featured_train_df.columns]
+            
+            if missing_features:
+                logger.warning(f"以下特征在数据中不存在: {missing_features}")
+            
+            logger.info(f"使用 {len(available_features)} 个手动配置的特征进行训练")
+            logger.info(f"选中的特征: {available_features}")
+            
+            # 只使用选定的特征
+            featured_train_df = featured_train_df[available_features]
+            
+        else:
+            # 使用自动特征选择
+            logger.info("使用自动特征选择...")
+            # 获取特征名称
+            feature_names = featured_train_df.columns.tolist()
+            
+            # 步骤2: 数据标准化
+            X_train, train_index = pipeline.normalize_data(featured_train_df)
+            
+            # 步骤3: 特征选择
+            logger_seperator("特征选择")
+            optimizer = EnhancedHMMOptimizer()
+            feature_selection_results = optimizer.comprehensive_feature_selection(
+                X_train, 
+                train_df_original['Close'].values,  # 使用收盘价作为目标变量
+                feature_names,
+                n_features=pipeline.config['feature_selection_config']['n_features']
+            )
+            
+            # 获取选中的特征
+            selected_features = feature_selection_results['selected_features']
+            logger.info(f"自动选择的特征数量: {len(selected_features)}")
+            logger.info(f"选中的特征: {selected_features}")
+            
+            # 使用选中的特征
+            X_train_selected = X_train[:, [feature_names.index(f) for f in selected_features]]
+            featured_train_df = featured_train_df[selected_features]
+            available_features = selected_features
+        
         logger.info(f"特征计算后数据形状: {featured_train_df.shape}")
         logger.info(f"特征列: {featured_train_df.columns.tolist()}")
         
-        # 获取特征名称
-        feature_names = featured_train_df.columns.tolist()
-        
-        # 步骤2: 数据标准化
+        # 数据标准化
         X_train, train_index = pipeline.normalize_data(featured_train_df)
         np.savetxt('X_train.csv', X_train, delimiter=',')
 
         logger.info(f"X_train: {X_train.shape}")
 
-        # 步骤3: 特征选择
-        logger_seperator("特征选择")
-        optimizer = EnhancedHMMOptimizer()
-        feature_selection_results = optimizer.comprehensive_feature_selection(
-            X_train, 
-            train_df_original['Close'].values,  # 使用收盘价作为目标变量
-            feature_names
-        )
-        
-        # 获取选中的特征
-        selected_features = feature_selection_results['selected_features']
-        logger.info(f"选中的特征数量: {len(selected_features)}")
-        logger.info(f"选中的特征: {selected_features}")
-        
-        # 使用选中的特征
-        X_train_selected = X_train[:, [feature_names.index(f) for f in selected_features]]
-        
-        # 步骤4: PCA降维
-        X_train_processed = pipeline.apply_pca(X_train_selected)
+        # PCA降维
+        logger_seperator("PCA降维")
+        X_train_processed = pipeline.apply_pca(X_train)
         
         # 存储处理后的特征名称
-        pipeline.processed_feature_names = selected_features
+        pipeline.processed_feature_names = available_features
         
-        # 步骤5: 训练HMM模型
+        # 训练HMM模型
         pipeline.train_hmm_model(X_train_processed)
         
         # 生成发射矩阵报告
         logger.info("\n生成发射矩阵分析报告...")
+        optimizer = EnhancedHMMOptimizer()
         optimizer.generate_emission_matrix_report(
             pipeline.hmm_model,
             pipeline.processed_feature_names,
-            'output/emission_matrix_report.html'
+            pipeline.config['output']['emission_matrix_path']
         )
         
         # 创建完整的训练数据集（包含原始数据和状态）
@@ -337,7 +409,7 @@ def train_model_improved(config_path: str = "src/HMM/config.yaml"):
         
         # 保存流水线
         logger.info("\n保存训练好的流水线...")
-        pipeline.save_pipeline('models/hmm_pipeline')
+        pipeline.save_pipeline(pipeline.config['output']['model_path'])
         
         # 保存数据快照用于分析
         complete_train_df.to_csv('output/complete_train_data.csv')
@@ -391,9 +463,9 @@ def analyze_data_flow(original_df, featured_df, processed_array):
 
 # 使用示例
 if __name__ == "__main__":
-
-    config_file = r"E:\VesperDecimal\src\HMM\config.yaml"
-    # 改进的训练流程
+    config_file = r"E:\Vesper\HMM\config.yaml"
+    
+    # 训练模型
     (pipeline, validation_result, complete_train_df, test_df_original, 
      X_train_processed, train_index, featured_train_df) = train_model_improved(config_file)
     
@@ -407,14 +479,16 @@ if __name__ == "__main__":
     complete_train_df.to_csv('output/complete_train_data.csv')
     featured_train_df.to_csv('output/featured_train_data.csv')  
 
-    #保存模型
+    # 保存模型
     pipeline.save_pipeline('models/hmm_pipeline')
 
-    #test
+    # 预测
     test_states, test_index, test_df, X_test_processed = predict_with_model(config_file)
 
-    #生成综合分析报告
-    generate_comprehensive_analysis(pipeline, complete_train_df, test_df, train_index, test_index,
-                                  X_train_processed, X_test_processed, test_states)
+    # 生成综合分析报告
+    generate_comprehensive_analysis(
+        pipeline, complete_train_df, test_df, train_index, test_index,
+        X_train_processed, X_test_processed, test_states
+    )
 
 
