@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import warnings
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional,Any
 from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
@@ -18,7 +18,7 @@ from basicDefination import ColumnNames, ConfigDefaults, Constants
 class EnhancedFeatureEngineer:
     """Enhanced Feature Engineering for HMM Training/Testing/Validation"""
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Optional[Dict] = None):
         self.scaler_type = config.get('scaler', ConfigDefaults.SCALER_TYPE)
         self.feature_selection = config.get('feature_selection', ConfigDefaults.FEATURE_SELECTION)
         self.top_k_features = config.get('top_k_features', ConfigDefaults.TOP_K_FEATURES)
@@ -263,9 +263,12 @@ class EnhancedFeatureEngineer:
             close = close.fillna(method='ffill')
             
             # 计算收益率特征
-            features[ColumnNames.RETURNS] = close.pct_change().clip(Constants.MIN_RETURN, Constants.MAX_RETURN)
-            features[ColumnNames.LOG_RETURNS] = np.log(close).diff().clip(Constants.MIN_RETURN, Constants.MAX_RETURN)
-            features[ColumnNames.ABS_RETURNS] = features[ColumnNames.RETURNS].abs()
+            windows = ColumnNames.RETURNS_WINDOWS
+            for window in windows:
+                features[ColumnNames.get_returns_column(window,'')] = close.pct_change(periods=window).clip(Constants.MIN_RETURN, Constants.MAX_RETURN)
+                features[ColumnNames.get_returns_column(window, 'log')] = np.log(close / close.shift(window)).fillna(0)
+                features[ColumnNames.get_returns_column(window, 'abs')] = abs(close.pct_change(periods=window).fillna(0))
+
             
             # 检查计算结果
             if features.empty:
@@ -367,29 +370,7 @@ class EnhancedFeatureEngineer:
         except Exception as e:
             logger.error(f"波动率特征计算失败: {str(e)}")
             raise
-    
-    def _calculate_volume_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate volume features"""
-        features = pd.DataFrame(index=df.index)
-        volume = self._get_column(df, 'volume').fillna(method='ffill')
-        close = self._get_column(df, 'close').fillna(method='ffill')
-        
-        # Volume moving average ratios
-        for window in [10, 20]:
-            vol_ma = volume.rolling(window).mean()
-            features[f'volume_ratio_{window}'] = volume / (vol_ma + 1e-8)
-        
-        # Price-volume relationship
-        returns = close.pct_change()
-        features['price_volume_corr'] = returns.rolling(20).corr(volume.pct_change())
-        
-        # Volume trend
-        features['volume_trend'] = volume.rolling(10).apply(
-            lambda x: np.polyfit(range(len(x)), x, 1)[0] if len(x) == 10 else 0
-        )
-        
-        return features
-    
+
     def _clean_features(self, features: pd.DataFrame) -> pd.DataFrame:
         """Clean features and handle missing values"""
         logger.info("开始清理特征...")
@@ -461,63 +442,6 @@ class EnhancedFeatureEngineer:
         except Exception as e:
             logger.error(f"特征清理失败: {str(e)}")
             raise
-    
-    # def _calculate_trend_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-    #     """Calculate trend indicators"""
-    #     logger.info("计算趋势指标...")
-    #     features = pd.DataFrame(index=df.index)
-        
-    #     try:
-    #         close = self._get_column(df, ColumnNames.CLOSE).fillna(method='ffill')
-    #         high = self._get_column(df, ColumnNames.HIGH).fillna(method='ffill')
-    #         low = self._get_column(df, ColumnNames.LOW).fillna(method='ffill')
-            
-    #         # ADX calculation
-    #         tr1 = high - low
-    #         tr2 = abs(high - close.shift(1))
-    #         tr3 = abs(low - close.shift(1))
-    #         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    #         atr = tr.rolling(14).mean()
-            
-    #         up_move = high - high.shift(1)
-    #         down_move = low.shift(1) - low
-            
-    #         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
-    #         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
-            
-    #         plus_di = 100 * pd.Series(plus_dm).rolling(14).mean() / atr
-    #         minus_di = 100 * pd.Series(minus_dm).rolling(14).mean() / atr
-            
-    #         dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    #         features[ColumnNames.ADX] = dx.rolling(14).mean()
-            
-    #         # Add DI+ and DI- for additional trend information
-    #         features['di_plus'] = plus_di
-    #         features['di_minus'] = minus_di
-            
-    #         # MA Slope calculation with improved stability
-    #         for window in ColumnNames.MA_WINDOWS:
-    #             ma = close.rolling(window).mean()
-    #             # Calculate slope using linear regression with improved stability
-    #             x = np.arange(window)
-    #             slope = ma.rolling(window).apply(
-    #                 lambda y: np.polyfit(x, y, 1)[0] if len(y) == window else np.nan
-    #             )
-    #             # Normalize slope by price level for better stability
-    #             features[ColumnNames.get_ma_slope_column(window)] = slope / (ma + Constants.EPSILON)
-            
-    #         # Add trend direction indicator
-    #         for window in [5, 10, 20, 60]:
-    #             ma = close.rolling(window).mean()
-    #             prev_ma = ma.shift(window)
-    #             features[f'trend_direction_{window}'] = np.where(ma > prev_ma, 1, -1)
-            
-    #         logger.info(f"趋势指标计算完成，形状: {features.shape}")
-    #         return features
-            
-    #     except Exception as e:
-    #         logger.error(f"趋势指标计算失败: {str(e)}")
-    #         raise
 
     def _calculate_trend_indicators_debug(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate trend indicators with debugging for ADX issue"""
@@ -634,49 +558,6 @@ class EnhancedFeatureEngineer:
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
-    # Alternative simpler ADX calculation
-    def _calculate_adx_simple(self, df: pd.DataFrame) -> tuple:
-        """Simplified ADX calculation for debugging"""
-        close = self._get_column(df, ColumnNames.CLOSE).ffill()
-        high = self._get_column(df, ColumnNames.HIGH).ffill()
-        low = self._get_column(df, ColumnNames.LOW).ffill()
-        
-        # True Range
-        tr1 = high - low
-        tr2 = abs(high - close.shift(1))
-        tr3 = abs(low - close.shift(1))
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        
-        # Use exponential moving average instead of simple moving average
-        atr = tr.ewm(span=14, min_periods=1).mean()
-        
-        # Directional Movement
-        plus_dm = pd.Series(np.where(
-            (high.diff() > low.diff().abs()) & (high.diff() > 0),
-            high.diff(),
-            0
-        ), index=df.index)
-        
-        minus_dm = pd.Series(np.where(
-            (low.diff().abs() > high.diff()) & (low.diff() < 0),
-            low.diff().abs(),
-            0
-        ), index=df.index)
-        
-        # Smooth DM
-        plus_dm_smooth = plus_dm.ewm(span=14, min_periods=1).mean()
-        minus_dm_smooth = minus_dm.ewm(span=14, min_periods=1).mean()
-        
-        # Calculate DI
-        plus_di = 100 * plus_dm_smooth / (atr + 1e-10)  # Add small epsilon
-        minus_di = 100 * minus_dm_smooth / (atr + 1e-10)
-        
-        # Calculate ADX
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
-        adx = dx.ewm(span=14, min_periods=1).mean()
-        
-        return adx, plus_di, minus_di
-    
     def _calculate_price_structure_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate price structure indicators"""
         logger.info("计算价格结构指标...")
@@ -862,76 +743,28 @@ class EnhancedFeatureEngineer:
 class HMMFeatureProcessor:
     """Wrapper class for HMM-specific feature processing workflow"""
     
-    def __init__(self, config: Dict):
+    def __init__(self,config: dict):
         self.feature_engineer = EnhancedFeatureEngineer(config)
         self.pipeline_path = config.get('pipeline_path', 'feature_pipeline.pkl')
-    
-    def normalize(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Normalize data"""
-        logger.info("Normalizing data...")
-        return self.feature_engineer.scaler.transform(df)
-    
-    def prepare_training_data(self, train_df: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.Index]:
-        """Prepare training data - fit and transform"""
-        logger.info("Preparing training data...")
-        features, feature_names, index = self.feature_engineer.fit_transform(train_df)
-        self.feature_engineer.save_pipeline(self.pipeline_path)
-        return features, feature_names, index
-    
-    def prepare_validation_data(self, val_df: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.Index]:
-        """Prepare validation data - transform only"""
-        logger.info("Preparing validation data...")
-        return self.feature_engineer.transform(val_df)
-    
-    def prepare_test_data(self, test_df: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.Index]:
-        """Prepare test data - transform only"""
-        logger.info("Preparing test data...")
-        return self.feature_engineer.transform(test_df)
-    
-    def prepare_inference_data(self, inference_df: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.Index]:
-        """Prepare inference data - load pipeline and transform"""
-        logger.info("Preparing inference data...")
-        if not self.feature_engineer.is_fitted:
-            self.feature_engineer.load_pipeline(self.pipeline_path)
-        return self.feature_engineer.transform(inference_df)
+
+    def calculate_all_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate all features for a given DataFrame"""
+        logger.info("Calculating all features...")
+        return self.feature_engineer._calculate_all_features(df)
+
+    def save_pipeline(self, filepath: str) -> None:
+        """Save the feature engineering pipeline"""
+        logger.info("Saving feature engineering pipeline...")
+        if self.feature_engineer.is_fitted:
+            self.feature_engineer.save_pipeline(filepath)
+        else:
+            logger.warning("Feature engineer not fitted, skipping feature processor save")
 
 
-def auto_feature_select(df, min_var=1e-6, p_gauss=0.01):
-    """
-    自动筛选分布近似高斯且方差较大的特征
-    :param df: 特征DataFrame
-    :param min_var: 最小方差阈值
-    :param p_gauss: 正态性检验p值阈值
-    :return: 筛选后的特征名列表
-    """
-    selected = []
-    for col in df.columns:
-        series = df[col].dropna()
-        if series.var() < min_var:
-            continue
-        # D'Agostino and Pearson's test for normality
-        stat, p = normaltest(series)
-        if p > p_gauss:  # p值大于阈值，认为近似高斯
-            selected.append(col)
-    return selected
+    def cal_pac(self,info:Dict[str, Any]) -> Dict[str, Any]:
+        if self.feature_engineer.pca is not None:
+            info['pca_explained_variance'] = self.feature_engineer.pca.explained_variance_ratio_
+            info['pca_cumulative_variance'] = np.cumsum(info['pca_explained_variance'])
+        return info
 
-def plot_feature_distributions(df, features=None, bins=50):
-    """
-    批量绘制特征分布图
-    :param df: 特征DataFrame
-    :param features: 要绘制的特征名列表，None则全部
-    :param bins: 直方图分箱数
-    """
-    if features is None:
-        features = df.columns
-    n = len(features)
-    ncols = 4
-    nrows = int(np.ceil(n / ncols))
-    plt.figure(figsize=(4 * ncols, 3 * nrows))
-    for i, col in enumerate(features, 1):
-        plt.subplot(nrows, ncols, i)
-        sns.histplot(df[col].dropna(), bins=bins, kde=True)
-        plt.title(col)
-    plt.tight_layout()
-    plt.show()
 

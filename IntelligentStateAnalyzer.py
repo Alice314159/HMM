@@ -18,15 +18,7 @@ warnings.filterwarnings('ignore')
 from ImprovedHmmPipeLine import ImprovedHMMPipeline
 
 class IntelligentStateAnalyzer:
-    """
-    智能状态分析器
-    
-    推荐用法：
-    1. matplotlib图片只保存不显示（不弹窗、不阻塞、不show），所有plot_*方法均自动保存图片并关闭figure。
-    2. 推荐使用 save_full_plotly_html_report 生成交互式HTML报告，避免嵌入matplotlib静态图片。
-    3. save_html_report 仅用于需要静态图片嵌入HTML的场景，通常不推荐。
-    """
-    
+
     # 统一的状态颜色映射，参考用户示例
     STATE_COLOR_MAP = {
         '深度熊市': '#006400',
@@ -241,31 +233,7 @@ class IntelligentStateAnalyzer:
             report.append("")
         
         return "\n".join(report)
-    
-    def plot_comprehensive_analysis(self):
-        """综合可视化分析"""
-        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
-        
-        # 1. 状态时间序列
-        self._plot_state_timeline(axes[0, 0])
-        
-        # 2. 转移矩阵热图
-        self._plot_transition_matrix(axes[0, 1])
-        
-        # 3. 状态统计对比
-        self._plot_state_statistics(axes[0, 2])
-        
-        # 4. 收益率分布
-        self._plot_returns_distribution(axes[1, 0])
-        
-        # 5. 状态持续时间
-        self._plot_state_durations(axes[1, 1])
-        
-        # 6. 风险收益散点图
-        self._plot_risk_return_scatter(axes[1, 2])
-        
-        plt.tight_layout()
-        plt.savefig('output/comprehensive_analysis.png')
+
     
     def _plot_state_timeline(self, ax):
         """绘制状态时间序列"""
@@ -422,116 +390,6 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/risk_return_scatter.png')
 
-    def _get_unified_state_order(self):
-        """统一状态排序逻辑"""
-        return sorted(self.market_states.keys())
-
-    def _get_unified_colors(self):
-        """统一颜色方案，优先用STATE_COLOR_MAP"""
-        state_order = self._get_unified_state_order()
-        colors_list = []
-        for state_id in state_order:
-            label = self.market_states[state_id].label
-            colors_list.append(self.STATE_COLOR_MAP.get(label, '#888888'))
-        return self.STATE_COLOR_MAP, colors_list
-
-    def _plot_state_timeline_unified(self, ax=None, plotly=False):
-        state_order = self._get_unified_state_order()
-        color_map, colors_list = self._get_unified_colors()
-        if plotly:
-            df_plot = pd.DataFrame({
-                'date': self.index,
-                'close': self.df.loc[self.index, 'Close'].values,
-                'state': [self.market_states[int(s)].label for s in self.states]
-            })
-            traces = []
-            for i, state_id in enumerate(state_order):
-                if state_id not in self.market_states:
-                    continue
-                label = self.market_states[state_id].label
-                sub = df_plot[df_plot['state'] == label]
-                if len(sub) == 0:
-                    continue
-                traces.append(go.Scatter(
-                    x=sub['date'], y=sub['close'],
-                    mode='markers',
-                    name=label,
-                    marker=dict(size=6, color=color_map.get(label, '#888888')),
-                    hovertemplate=f'日期: %{{x}}<br>收盘价: %{{y}}<br>状态: {label}'
-                ))
-            fig = go.Figure(traces)
-            fig.update_layout(title="市场状态时间序列", xaxis_title="日期", yaxis_title="收盘价")
-            return fig
-        else:
-            if ax is None:
-                fig, ax = plt.subplots(figsize=(12, 6))
-            state_series = pd.Series(self.states, index=self.index)
-            close_prices = self.df.loc[self.index, 'Close']
-            for i, state_id in enumerate(state_order):
-                if state_id not in self.market_states:
-                    continue
-                mask = state_series == state_id
-                if not np.any(mask):
-                    continue
-                state_dates = state_series.index[mask]
-                state_prices = close_prices[mask]
-                label = self.market_states[state_id].label
-                ax.scatter(state_dates, state_prices, 
-                          c=colors_list[i], label=label, 
-                          alpha=0.7, s=20)
-            ax.set_title('市场状态时间序列')
-            ax.set_xlabel('日期')
-            ax.set_ylabel('收盘价')
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            ax.grid(True, alpha=0.3)
-            return ax
-
-    def _plot_transition_matrix_unified(self, ax=None, plotly=False):
-        """统一的转移矩阵绘制"""
-        state_order = self._get_unified_state_order()
-        n = len(state_order)
-        if self.model.transmat_.shape[0] != n:
-            n = self.model.transmat_.shape[0]
-            state_order = list(range(n))
-        labels = [self.market_states.get(s, f"状态{s}").label if s in self.market_states else f"状态{s}" for s in state_order]
-        transmat = self.model.transmat_
-        if plotly:
-            fig = go.Figure(go.Heatmap(
-                z=transmat, 
-                x=labels, 
-                y=labels, 
-                colorscale='Blues', 
-                showscale=True,
-                hovertemplate='从 %{y} 到 %{x}: %{z:.3f}<extra></extra>'
-            ))
-            fig.update_layout(
-                title="状态转移矩阵", 
-                xaxis_title="转移到状态", 
-                yaxis_title="来自状态"
-            )
-            return fig
-        else:
-            if ax is None:
-                fig, ax = plt.subplots(figsize=(8, 6))
-            sns.heatmap(transmat, annot=True, fmt='.3f', cmap='Blues', 
-                       xticklabels=labels, yticklabels=labels,
-                       ax=ax, cbar_kws={'shrink': 0.8})
-            ax.set_title('状态转移矩阵')
-            ax.set_xlabel('转移到状态')
-            ax.set_ylabel('来自状态')
-            return ax
-
-    def save_consistent_plots(self):
-        """保存一致性的图表"""
-        os.makedirs('output', exist_ok=True)
-        fig, ax = plt.subplots(figsize=(12, 6))
-        self._plot_state_timeline_unified(ax=ax, plotly=False)
-        plt.tight_layout()
-        plt.savefig('output/state_timeline_unified.png', dpi=150, bbox_inches='tight')
-        plt.close()
-        fig_plotly = self._plot_state_timeline_unified(plotly=True)
-        fig_plotly.write_html('output/state_timeline_unified.html')
-        logger.info("统一格式的图表已保存")
 
     def _debug_transition_matrix_data(self):
         """调试转移矩阵数据"""
@@ -924,3 +782,211 @@ class IntelligentStateAnalyzer:
         
         return html_path
 
+    def generate_emission_matrix_report(self,
+                                        output_path='output/emission_matrix_report.html'):
+        """
+        生成发射矩阵的可视化报告
+
+        参数:
+        - hmm_model: 训练好的HMM模型
+        - feature_names: 特征名称列表
+        - output_path: 输出HTML文件的路径
+        """
+        logger.info("生成发射矩阵可视化报告...")
+        if output_path and not os.path.exists(output_path):
+            os.makedirs(output_path, exist_ok=True)
+
+        # 获取发射矩阵和协方差矩阵
+        emission_matrix = self.model.means_
+        covars = self.model.covars_
+
+        # 检查特征维度是否匹配
+        if emission_matrix.shape[1] != len(self.feature_names):
+            logger.warning(
+                f"发射矩阵特征维度 ({emission_matrix.shape[1]}) 与特征名称数量 ({len(self.feature_names)}) 不匹配")
+            # 如果特征名称过多，截取需要的部分
+            if len(self.feature_names) > emission_matrix.shape[1]:
+                self.feature_names = self.feature_names[:emission_matrix.shape[1]]
+            # 如果特征名称不足，添加占位符
+            else:
+                self.feature_names.extend([f'Feature_{i}' for i in range(len(self.feature_names), emission_matrix.shape[1])])
+
+        # 创建HTML报告
+        html_content = []
+        html_content.append("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>HMM发射矩阵分析报告</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .container { max-width: 1200px; margin: 0 auto; }
+                .section { margin-bottom: 30px; }
+                h1, h2, h3 { color: #333; }
+                table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+                th { background-color: #f5f5f5; }
+                .heatmap { margin: 20px 0; }
+                .feature-info { margin: 10px 0; }
+                .state-info { margin: 10px 0; }
+                .warning { color: #856404; background-color: #fff3cd; padding: 10px; margin: 10px 0; border-radius: 4px; }
+                .covariance-info { margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>HMM发射矩阵分析报告</h1>
+        """)
+
+        # 添加维度信息
+        html_content.append(f'<div class="section">')
+        html_content.append(f'<p>状态数量: {emission_matrix.shape[0]}</p>')
+        html_content.append(f'<p>特征数量: {emission_matrix.shape[1]}</p>')
+        html_content.append('</div>')
+
+        # 添加发射矩阵表格
+        html_content.append('<div class="section">')
+        html_content.append('<h2>发射矩阵（均值）</h2>')
+        html_content.append('<table>')
+
+        # 表头
+        html_content.append('<tr><th>状态</th>')
+        for feature in self.feature_names:
+            html_content.append(f'<th>{feature}</th>')
+        html_content.append('</tr>')
+
+        # 表格内容
+        for state_idx, state_emissions in enumerate(emission_matrix):
+            html_content.append(f'<tr><td>状态 {state_idx}</td>')
+            for emission in state_emissions:
+                html_content.append(f'<td>{emission:.4f}</td>')
+            html_content.append('</tr>')
+
+        html_content.append('</table>')
+
+        # 添加协方差矩阵分析
+        html_content.append('<div class="section">')
+        html_content.append('<h2>协方差矩阵分析</h2>')
+
+        for state_idx, state_covar in enumerate(covars):
+            html_content.append(f'<div class="state-info">')
+            html_content.append(f'<h3>状态 {state_idx} 的协方差矩阵</h3>')
+
+            # 计算特征对之间的相关性
+            corr_matrix = np.zeros_like(state_covar)
+            for i in range(len(self.feature_names)):
+                for j in range(len(self.feature_names)):
+                    if state_covar[i, i] > 0 and state_covar[j, j] > 0:
+                        corr_matrix[i, j] = state_covar[i, j] / np.sqrt(state_covar[i, i] * state_covar[j, j])
+
+            # 添加协方差表格
+            html_content.append('<table>')
+            html_content.append('<tr><th>特征</th>')
+            for feature in self.feature_names:
+                html_content.append(f'<th>{feature}</th>')
+            html_content.append('</tr>')
+
+            for i, feature in enumerate(self.feature_names):
+                html_content.append(f'<tr><td>{feature}</td>')
+                for j in range(len(self.feature_names)):
+                    html_content.append(f'<td>{state_covar[i, j]:.4f}</td>')
+                html_content.append('</tr>')
+
+            html_content.append('</table>')
+
+            # 添加相关性分析
+            html_content.append('<div class="covariance-info">')
+            html_content.append('<h4>特征相关性分析</h4>')
+
+            # 找出强相关的特征对
+            strong_corr_pairs = []
+            for i in range(len(self.feature_names)):
+                for j in range(i + 1, len(self.feature_names)):
+                    if abs(corr_matrix[i, j]) > 0.7:  # 相关系数阈值
+                        strong_corr_pairs.append(
+                            f"{self.feature_names[i]} - {self.feature_names[j]}: {corr_matrix[i, j]:.3f}"
+                        )
+
+            if strong_corr_pairs:
+                html_content.append('<p>强相关特征对 (|相关系数| > 0.7):</p>')
+                html_content.append('<ul>')
+                for pair in strong_corr_pairs:
+                    html_content.append(f'<li>{pair}</li>')
+                html_content.append('</ul>')
+            else:
+                html_content.append('<p>没有发现强相关的特征对</p>')
+
+            # 添加方差分析
+            variances = np.diag(state_covar)
+            max_var_idx = np.argmax(variances)
+            min_var_idx = np.argmin(variances)
+
+            html_content.append('<h4>方差分析</h4>')
+            html_content.append(f'<p>最大方差特征: {self.feature_names[max_var_idx]} ({variances[max_var_idx]:.4f})</p>')
+            html_content.append(f'<p>最小方差特征: {self.feature_names[min_var_idx]} ({variances[min_var_idx]:.4f})</p>')
+
+            html_content.append('</div>')
+            html_content.append('</div>')
+
+        html_content.append('</div>')
+
+        # 添加状态分析
+        html_content.append('<div class="section">')
+        html_content.append('<h2>状态特征分析</h2>')
+
+        for state_idx, state_emissions in enumerate(emission_matrix):
+            html_content.append(f'<div class="state-info">')
+            html_content.append(f'<h3>状态 {state_idx} 的特征分布</h3>')
+
+            # 找出该状态下最重要的特征
+            sorted_indices = np.argsort(np.abs(state_emissions))[::-1]
+            top_features = [(self.feature_names[i], state_emissions[i]) for i in sorted_indices[:5]]
+
+            html_content.append('<ul>')
+            for feature, value in top_features:
+                html_content.append(f'<li>{feature}: {value:.4f}</li>')
+            html_content.append('</ul>')
+            html_content.append('</div>')
+
+        html_content.append('</div>')
+
+        # 添加特征分析
+        html_content.append('<div class="section">')
+        html_content.append('<h2>特征状态分析</h2>')
+
+        for feature_idx, feature_name in enumerate(self.feature_names):
+            html_content.append(f'<div class="feature-info">')
+            html_content.append(f'<h3>{feature_name}</h3>')
+
+            # 计算该特征在不同状态下的变化
+            feature_values = emission_matrix[:, feature_idx]
+            mean_value = np.mean(feature_values)
+            std_value = np.std(feature_values)
+
+            html_content.append(f'<p>平均值: {mean_value:.4f}</p>')
+            html_content.append(f'<p>标准差: {std_value:.4f}</p>')
+
+            # 找出该特征最显著的状态
+            max_state = np.argmax(np.abs(feature_values))
+            html_content.append(f'<p>最显著状态: 状态 {max_state} (值: {feature_values[max_state]:.4f})</p>')
+
+            html_content.append('</div>')
+
+        html_content.append('</div>')
+
+        # 结束HTML
+        html_content.append("""
+            </div>
+        </body>
+        </html>
+        """)
+
+        # 保存HTML文件
+        output_path = './output/emission_matrix_report_v2.html'
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(html_content))
+
+        logger.info(f"发射矩阵报告已保存到: {output_path}")
+
+        return output_path

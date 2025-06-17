@@ -113,15 +113,7 @@ class ScalerManager:
         """获取自动推荐的scaler类型"""
         return self.auto_recommendations.copy()
     
-    def update_scaler_for_feature(self, feature: str, scaler_type: str):
-        """更新特定特征的scaler类型"""
-        if feature not in self.feature_names:
-            raise ValueError(f"特征 {feature} 不在特征列表中")
-        
-        self.scalers[feature] = self._create_scaler(scaler_type)
-        self.auto_recommendations[feature] = scaler_type
-        logger.info(f"已更新特征 {feature} 的scaler类型为 {scaler_type}")
-    
+
     def fit(self, X: Union[np.ndarray, pd.DataFrame], feature_names: Optional[List[str]] = None):
         """
         拟合标准化器
@@ -351,39 +343,3 @@ class ScalerManager:
                 })
                 
         return params
-
-
-# 使用示例
-if __name__ == "__main__":
-    # 您的特征列表
-    features = ['returns', 'log_returns', 'abs_returns', 'ma_ratio_5', 'ma_distance_5', 
-                'ma_ratio_10', 'ma_distance_10', 'ma_ratio_20', 'ma_distance_20', 
-                'ma_ratio_60', 'ma_distance_60', 'momentum_5', 'roc_5', 'momentum_10', 
-                'roc_10', 'momentum_20', 'roc_20', 'rsi_14', 'rsi_30', 'volatility_5', 
-                'realized_vol_5', 'volatility_10', 'realized_vol_10', 'volatility_20', 
-                'realized_vol_20', 'volatility_60', 'realized_vol_60', 'vol_ratio', 'garch_vol']
-    
-    # 创建自动推荐的ScalerManager
-    scaler_manager = ScalerManager(scaler_type='auto', feature_names=features)
-    
-    # 查看推荐结果
-    recommendations = scaler_manager.get_recommendations()
-    print("自动推荐的scaler类型:")
-    for feature, scaler_type in recommendations.items():
-        print(f"{feature}: {scaler_type}")
-    
-    # 模拟数据进行测试
-    np.random.seed(42)
-    n_samples = 1000
-    X_test = np.random.randn(n_samples, len(features))
-    
-    # 拟合和转换
-    X_scaled = scaler_manager.fit_transform(X_test)
-    print(f"\n原始数据形状: {X_test.shape}")
-    print(f"缩放后数据形状: {X_scaled.shape}")
-    
-    # 获取缩放信息
-    scaling_info = scaler_manager.get_scaling_info()
-    print(f"\n缩放配置信息:")
-    print(f"特征数量: {scaling_info['n_features']}")
-    print(f"缩放器类型: {scaling_info['scaler_type']}")

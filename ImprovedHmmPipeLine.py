@@ -24,9 +24,8 @@ class ImprovedHMMPipeline:
             self.config = config_path
         
         # Initialize feature processor
-        self.feature_processor = HMMFeatureProcessor(self.config['feature_engineer'])
-        self.feature_engineer = EnhancedFeatureEngineer(self.config['feature_engineer'])
-        
+        self.feature_processor = HMMFeatureProcessor(self.config)
+
         # Initialize scaler manager
         scaler_config = self.config.get('scaler', {})
         if isinstance(scaler_config, dict):
@@ -60,11 +59,12 @@ class ImprovedHMMPipeline:
     def split_data_by_time(self, df: pd.DataFrame, cutoff_date: str = '2025-01-01') -> tuple:
         """Split data by time into training and testing sets"""
         logger.info("Splitting data by time...")
-        
+
+        cutoff1 = pd.Timestamp('2017-01-01')
         cutoff = pd.Timestamp(cutoff_date)
         test_cutoff = pd.Timestamp(cutoff_date) - pd.Timedelta(days=45)
         
-        train_df = df[df.index < cutoff].copy()
+        train_df = df[(df.index < cutoff) & (df.index >= cutoff1)].copy()
         test_df = df[df.index >= test_cutoff].copy()
         
         logger.info(f"Training data: {len(train_df)} records ({train_df.index.min()} to {train_df.index.max()})")
@@ -91,7 +91,7 @@ class ImprovedHMMPipeline:
         
         # Compute features
         try:
-            df_features = self.feature_engineer._calculate_all_features(df)
+            df_features = self.feature_processor.calculate_all_features(df)
             
             # Check feature calculation results
             if df_features is None or df_features.empty:
@@ -114,34 +114,30 @@ class ImprovedHMMPipeline:
                     mean = df['Close'].rolling(window=20).mean()
                     std = df['Close'].rolling(window=20).std()
                     df_features['Price_Zscore'] = (df['Close'] - mean) / (std + 1e-8)
-            
-            # Check for missing values
-            #df_features.to_csv('df_features.csv')
-            missing_values = df_features.isnull().sum()
-            if missing_values.any():
-                logger.warning(f"Missing values in features:\n{missing_values[missing_values > 0]}")
-                
-                # 1. 首先尝试使用前向填充
-                df_features = df_features.fillna(method='ffill')
-                
-                # 2. 对于剩余的缺失值，使用后向填充
-                df_features = df_features.fillna(method='bfill')
-                
-                # 3. 对于仍然存在的缺失值（比如序列开始或结束处的值），使用列的中位数填充
-                df_features = df_features.fillna(df_features.median())
-                
-                # 4. 如果某列全部为缺失值，则使用0填充
-                df_features = df_features.fillna(0)
-                
-                # 记录处理结果
-                remaining_missing = df_features.isnull().sum().sum()
-                if remaining_missing > 0:
-                    logger.warning(f"Still have {remaining_missing} missing values after filling")
+
+                    # Merge original raw fields and new features
+                full_features = pd.concat([df, df_features], axis=1)
+
+                # Handle missing values in full feature set
+                missing_values = full_features.isnull().sum()
+                if missing_values.any():
+                    logger.warning(f"Missing values in features:\n{missing_values[missing_values > 0]}")
+
+                    full_features = full_features.fillna(method='ffill')
+                    full_features = full_features.fillna(method='bfill')
+                    full_features = full_features.fillna(full_features.median())
+                    full_features = full_features.fillna(0)
+
+                    remaining_missing = full_features.isnull().sum().sum()
+                    if remaining_missing > 0:
+                        logger.warning(f"Still have {remaining_missing} missing values after filling")
+                    else:
+                        logger.info("Successfully filled all missing values")
                 else:
-                    logger.info("Successfully filled all missing values")
-            
-            return df_features
-            
+                    logger.info("No missing values detected")
+
+                return full_features
+
         except Exception as e:
             logger.error(f"Feature calculation failed: {str(e)}")
             raise
@@ -344,34 +340,7 @@ class ImprovedHMMPipeline:
         
         return X_pca
 
-    def prepare_training_data(self, train_df: pd.DataFrame) -> tuple:
-        """Prepare training data by computing features and normalizing"""
-        logger.info("Preparing training data...")
-        
-        # Compute features and fit feature engineer
-        df_features = self.compute_features(train_df)
-        
-        # Ensure feature engineer is fitted
-        if not self.feature_engineer.is_fitted:
-            self.feature_engineer.fit(train_df)
-        
-        # Normalize data
-        X_normalized, train_index = self.normalize_data(df_features)
-        
-        # Apply PCA if configured (training mode)
-        if self.pca_variance_ratio is not None or self.pca_n_components is not None:
-            X_normalized = self.apply_pca(X_normalized, is_training=True)
-        
-        # Store feature names
-        if self.feature_names is None:
-            self.feature_names = list(df_features.columns)
-        self.train_index = train_index
-        
-        # Mark pipeline as fitted
-        self.is_fitted = True
-        
-        logger.info(f"Training data prepared: {X_normalized.shape[0]} samples, {X_normalized.shape[1]} features")
-        return X_normalized, self.feature_names, train_index
+
     
     def train_hmm_model(self, X_train: np.ndarray) -> None:
         """Train HMM model on normalized training data"""
@@ -390,28 +359,7 @@ class ImprovedHMMPipeline:
         logger.info(f"Training data state distribution: {np.bincount(self.train_states)}")
         logger.info(f"Training metrics: {self.train_metrics}")
     
-    def prepare_test_data(self, test_df: pd.DataFrame) -> tuple:
-        """Prepare test data using fitted transformers"""
-        logger.info("Preparing test data...")
-        
-        if not self.scaler_manager.is_fitted:
-            raise ValueError("Scaler must be fitted first. Call normalize_data or prepare_training_data first.")
-        
-        # Compute features for test data
-        df_features = self.compute_features(test_df)
-        
-        # Transform test data using fitted scaler
-        X_test = self.scaler_manager.transform(df_features.values)
-        
-        # Apply PCA if fitted (inference mode)
-        if self.pca is not None:
-            X_test = self.apply_pca(X_test, is_training=False)
-        
-        test_index = df_features.index
-        self.test_index = test_index
-        
-        logger.info(f"Test data prepared: {X_test.shape[0]} samples, {X_test.shape[1]} features")
-        return X_test, test_index
+
     
     def predict_states(self, X_test: np.ndarray) -> np.ndarray:
         """Predict states for test data"""
@@ -427,65 +375,7 @@ class ImprovedHMMPipeline:
         logger.info(f"Test data state distribution: {np.bincount(test_states)}")
         
         return test_states
-    
-    def run_full_pipeline(self, train_df: pd.DataFrame, test_df: pd.DataFrame = None, 
-                         cutoff_date: str = None) -> dict:
-        """Run the complete pipeline"""
-        logger.info("Running complete HMM pipeline...")
-        
-        results = {}
-        
-        # Prepare training data
-        X_train, feature_names, train_index = self.prepare_training_data(train_df)
-        results['X_train'] = X_train
-        results['train_index'] = train_index
-        results['feature_names'] = feature_names
-        
-        # Split data if needed
-        if test_df is None and cutoff_date is not None:
-            train_df, test_df = self.split_data_by_time(train_df, cutoff_date)
-            # Re-prepare training data after split
-            X_train, feature_names, train_index = self.prepare_training_data(train_df)
-            results['X_train'] = X_train
-            results['train_index'] = train_index
-        
-        # Train HMM
-        self.train_hmm_model(X_train)
-        results['train_states'] = self.train_states
-        results['train_metrics'] = self.train_metrics
-        
-        # Process test data if available
-        if test_df is not None:
-            X_test, test_index = self.prepare_test_data(test_df)
-            test_states = self.predict_states(X_test)
-            
-            results['X_test'] = X_test
-            results['test_index'] = test_index
-            results['test_states'] = test_states
-            
-            # Validation
-            validation_results = self.validate_pipeline_consistency(X_train, X_test)
-            results['validation'] = validation_results
-        
-        logger.info("Complete pipeline execution finished")
-        return results
-    
-    def predict_new_data(self, new_df: pd.DataFrame) -> tuple:
-        """Predict on completely new data (inference mode)"""
-        logger.info("Predicting on new data...")
-        
-        if not self.is_fitted:
-            raise ValueError("Pipeline must be trained first")
-        
-        # Prepare new data
-        X_new, new_index = self.prepare_test_data(new_df)
-        
-        # Predict states
-        new_states = self.predict_states(X_new)
-        
-        logger.info(f"New data prediction completed: {len(new_states)} predictions")
-        
-        return new_states, new_index
+
     
     def save_pipeline(self, save_path: str) -> None:
         """Save complete processing pipeline"""
@@ -498,10 +388,7 @@ class ImprovedHMMPipeline:
         
         # Save feature processor
         feature_processor_path = os.path.join(save_path, 'feature_processor.pkl')
-        if self.feature_engineer.is_fitted:
-            self.feature_engineer.save_pipeline(feature_processor_path)
-        else:
-            logger.warning("Feature engineer not fitted, skipping feature processor save")
+        self.feature_processor.save_pipeline(feature_processor_path)
         
         # Save scaler
         scaler_path = os.path.join(save_path, 'scaler.pkl')
@@ -654,50 +541,6 @@ class ImprovedHMMPipeline:
             'n_states': self.hmm_model.n_components if self.hmm_model else 0,
             'train_state_distribution': np.bincount(self.train_states) if self.train_states is not None else None
         }
-        
-        # Get PCA explained variance if available
-        if self.feature_processor.feature_engineer.pca is not None:
-            importance_info['pca_explained_variance'] = self.feature_processor.feature_engineer.pca.explained_variance_ratio_
-            importance_info['pca_cumulative_variance'] = np.cumsum(importance_info['pca_explained_variance'])
-        
+        importance_info = self.feature_processor.cal_pac(importance_info)
         return importance_info
-    
-    def generate_report(self) -> dict:
-        """Generate comprehensive pipeline report"""
-        if not self.is_fitted:
-            raise ValueError("Pipeline must be fitted first")
-        
-        report = {
-            'pipeline_status': 'fitted',
-            'config': self.config,
-            'feature_info': self.get_feature_importance(),
-            'model_info': {
-                'n_states': self.hmm_model.n_components if self.hmm_model else 0,
-                'train_metrics': self.train_metrics
-            },
-            'data_info': {
-                'train_samples': len(self.train_index) if self.train_index is not None else 0,
-                'test_samples': len(self.test_index) if self.test_index is not None else 0,
-                'train_date_range': (self.train_index.min(), self.train_index.max()) if self.train_index is not None else None,
-                'test_date_range': (self.test_index.min(), self.test_index.max()) if self.test_index is not None else None
-            }
-        }
-        
-        return report
-
-    
-    def _generate_metrics_table(self, metrics: dict) -> str:
-        """Generate HTML table rows for metrics"""
-        if not metrics:
-            return "<tr><td>No metrics available</td></tr>"
-        
-        rows = []
-        for metric, value in metrics.items():
-            rows.append(f"<tr><th>{metric}</th><td>{value:.4f}</td></tr>")
-        return "\n".join(rows)
-    
-    def _format_config(self, config: dict) -> str:
-        """Format configuration dictionary for HTML display"""
-        import json
-        return json.dumps(config, indent=2)
 

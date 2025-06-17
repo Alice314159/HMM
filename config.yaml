@@ -6,6 +6,7 @@
 scaler: robust  # 可选: standard, minmax, robust
 feature_selection: false
 top_k_features: 30
+pca_variance_ratio: 0.95  # 可设置为整数 或 float(如0.95)，表示保留的PCA方差比
 pca_components: null  # 可设置为整数 或 float(如0.95)，表示保留的PCA方差比
 
 data:
@@ -17,58 +18,65 @@ data:
 
 use_manual_features: true
 manual_features:
-  - ma_ratio_20
-  - ma_ratio_60
-  - macd
-  - macd_hist
-  - kdj_k
-  - adx
-  - di_plus
-  - volatility_60
-  - garch_vol
-  - hl_spread
-  - momentum_20
-  - price_range_position
-  - close_zscore_60
-  - Price_Zscore
-  - ma_slope_ratio_10_60
-  - price_ma_corr_60
-  - trend_strength_60
-  - momentum_stability_20
+  - returns_5
+  - Volume
+  - volatility_20
+#  - ma_ratio_20
+#  - ma_ratio_60
+#  - macd
+#  - macd_hist
+#  - kdj_k
+#  - adx
+#  - di_plus
+#  - volatility_60
+#  - garch_vol
+#  - hl_spread
+#  - momentum_20
+#  - price_range_position
+#  - close_zscore_60
+#  - Price_Zscore
+#  - ma_slope_ratio_10_60
+#  - price_ma_corr_60
+#  - trend_strength_60
+#  - momentum_stability_20
 
-feature_engineer:
-  technical_indicators:
-    - sma_5
-    - sma_10
-    - sma_20
-    - sma_30
-  volatility_indicators:
-    - std_dev
-    - bollinger_bands
-  volume_indicators:
-    - sma_5
-    - sma_10
-    - sma_20
-    - sma_30
-  price_features:
-    - Close
-    - Open
-    - High
-    - Low
-  pca_variance_ratio: 0.95
-
-feature_selection_config:
-  enable: true
-  n_features: 10
-  methods:
-    - f_test
-    - mutual_info
-    - random_forest
-    - pca
-    - correlation
+#feature_engineer:
+#  returns:
+#    - returns_1
+#    - returns_5
+#    - returns_10
+#  technical_indicators:
+#    - sma_5
+#    - sma_10
+#    - sma_20
+#    - sma_30
+#  volatility_indicators:
+#    - std_dev
+#    - bollinger_bands
+#  volume_indicators:
+#    - sma_5
+#    - sma_10
+#    - sma_20
+#    - sma_30
+#  price_features:
+#    - Close
+#    - Open
+#    - High
+#    - Low
+#  pca_variance_ratio: 0.95
+#
+#feature_selection_config:
+#  enable: true
+#  n_features: 10
+#  methods:
+#    - f_test
+#    - mutual_info
+#    - random_forest
+#    - pca
+#    - correlation
 
 trainer:
-  n_states: 8
+  n_states: 3
   n_components: 4
   covariance_type: full
   n_iter: 100

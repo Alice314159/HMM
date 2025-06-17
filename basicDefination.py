@@ -107,6 +107,7 @@ class ColumnNames:
     BB_WINDOWS = [20, 50]
     MA_WINDOWS = [5, 10, 20, 60]
     VOLUME_WINDOWS = [5, 10, 20]
+    RETURNS_WINDOWS = [1,5, 10, 20, 60]
     
     @classmethod
     def get_volatility_column(cls, window: int) -> str:
@@ -128,6 +129,16 @@ class ColumnNames:
     def get_momentum_column(cls, period: int) -> str:
         """获取动量指标列名"""
         return f"{cls.MOMENTUM}_{period}"
+
+    @classmethod
+    def get_returns_column(cls, window: int, section: str = "log") -> str:
+        """获取收益率列名"""
+        if section == "abs":
+            return f"{cls.ABS_RETURNS}_{window}"
+        elif section == "log":
+            return f"{cls.LOG_RETURNS}_{window}"
+        else:
+            return f"{cls.RETURNS}_{window}"
     
     @classmethod
     def get_roc_column(cls, period: int) -> str:
@@ -205,7 +216,7 @@ class ConfigDefaults:
     """配置默认值"""
     SCALER_TYPE = 'robust'
     FEATURE_SELECTION = False
-    TOP_K_FEATURES = 30
+    TOP_K_FEATURES = 10
     PCA_VARIANCE_RATIO = 0.95
     HMM_N_COMPONENTS = 3
     HMM_COVARIANCE_TYPE = 'full'
