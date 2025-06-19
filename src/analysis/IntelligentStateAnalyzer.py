@@ -6,16 +6,11 @@ import warnings
 from typing import  List,  Tuple
 
 import os
-import plotly.graph_objs as go
-import plotly.io as pio
-import plotly.subplots as sp
 
 from hmmlearn.hmm import GaussianHMM
-from basicDefination import MarketState
+from src.utils.basicDefination import MarketState
 from loguru import logger
 warnings.filterwarnings('ignore')
-
-from ImprovedHmmPipeLine import ImprovedHMMPipeline
 
 class IntelligentStateAnalyzer:
 
@@ -40,6 +35,14 @@ class IntelligentStateAnalyzer:
     
     def __init__(self, model: GaussianHMM, states: np.ndarray, X: np.ndarray, 
                  feature_names: List[str], index: pd.Index, df: pd.DataFrame):
+        """初始化智能状态分析器
+        :param model: 训练好的HMM模型
+        :param states: 状态序列
+        :param X: 特征矩阵
+        :param feature_names: 特征名称列表
+        :param index: 数据索引（通常是日期）
+        :param df: 原始数据DataFrame
+        """
         self.model = model
         self.states = states
         self.X = X
@@ -325,14 +328,14 @@ class IntelligentStateAnalyzer:
         output_dir = os.path.dirname(prefix)
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        self.plot_state_timeline(f'{prefix}timeline.png')
-        self.plot_transition_matrix(f'{prefix}transmat.png')
-        self.plot_state_statistics(f'{prefix}statistics.png')
-        self.plot_returns_distribution(f'{prefix}returns.png')
-        self.plot_state_durations(f'{prefix}durations.png')
-        self.plot_risk_return_scatter(f'{prefix}risk_return.png')
+        self._plot_state_timeline(f'{prefix}timeline.png')
+        self._plot_transition_matrix(f'{prefix}transmat.png')
+        self._plot_state_statistics(f'{prefix}statistics.png')
+        self._plot_returns_distribution(f'{prefix}returns.png')
+        self._plot_state_durations(f'{prefix}durations.png')
+        self._plot_risk_return_scatter(f'{prefix}risk_return.png')
 
-    def plot_state_timeline(self, filename=None):
+    def _plot_state_timeline(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_state_timeline(ax)
         plt.tight_layout()
@@ -340,7 +343,7 @@ class IntelligentStateAnalyzer:
             plt.savefig(filename, dpi=150)
         plt.savefig('output/state_timeline.png')
 
-    def plot_transition_matrix(self, filename=None):
+    def _plot_transition_matrix(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_transition_matrix(ax)
         plt.tight_layout()
@@ -350,7 +353,7 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/transition_matrix.png')
 
-    def plot_state_statistics(self, filename=None):
+    def _plot_state_statistics(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_state_statistics(ax)
         plt.tight_layout()
@@ -360,7 +363,7 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/state_statistics.png')
 
-    def plot_returns_distribution(self, filename=None):
+    def _plot_returns_distribution(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_returns_distribution(ax)
         plt.tight_layout()
@@ -370,7 +373,7 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/returns_distribution.png')
 
-    def plot_state_durations(self, filename=None):
+    def _plot_state_durations(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_state_durations(ax)
         plt.tight_layout()
@@ -380,7 +383,7 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/state_durations.png')
 
-    def plot_risk_return_scatter(self, filename=None):
+    def _plot_risk_return_scatter(self, filename=None):
         fig, ax = plt.subplots(figsize=(8, 6))
         self._plot_risk_return_scatter(ax)
         plt.tight_layout()
@@ -405,7 +408,7 @@ class IntelligentStateAnalyzer:
         logger.info("========================")
 
 
-    def save_full_plotly_html_report_fixed_v2(self, html_path='output/state_analysis_plotly_report_fixed_v2.html'):
+    def save_full_plotly_html_report(self, html_path='output/state_analysis_plotly_report.html'):
         """
         修复版本V2：解决转移矩阵在HTML中显示为空的问题
         """
@@ -793,9 +796,6 @@ class IntelligentStateAnalyzer:
         - output_path: 输出HTML文件的路径
         """
         logger.info("生成发射矩阵可视化报告...")
-        if output_path and not os.path.exists(output_path):
-            os.makedirs(output_path, exist_ok=True)
-
         # 获取发射矩阵和协方差矩阵
         emission_matrix = self.model.means_
         covars = self.model.covars_
@@ -983,7 +983,6 @@ class IntelligentStateAnalyzer:
         """)
 
         # 保存HTML文件
-        output_path = './output/emission_matrix_report_v2.html'
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(html_content))
 

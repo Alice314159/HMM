@@ -29,7 +29,7 @@ class EnhancedHMMOptimizer:
         - 包含特征选择结果的字典
         """
         # 创建输出目录
-        os.makedirs('output', exist_ok=True)
+        os.makedirs('../../output', exist_ok=True)
         
         # 1. F检验（回归）
         f_selector = SelectKBest(f_regression, k='all')
@@ -106,7 +106,7 @@ class EnhancedHMMOptimizer:
         logger.info("生成特征分析报告...")
         
         # 创建输出目录
-        os.makedirs('output', exist_ok=True)
+        os.makedirs('../../output', exist_ok=True)
         
         # 1. 绘制特征重要性条形图
         plt.figure(figsize=(12, 6))

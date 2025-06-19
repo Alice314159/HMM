@@ -2,37 +2,11 @@ import matplotlib
 matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
-from matplotlib import colors
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import yaml
 import warnings
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
-import logging
-from concurrent.futures import ProcessPoolExecutor
-import joblib
-import os
-import plotly.graph_objs as go
-import plotly.io as pio
-import plotly.subplots as sp
-
-from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
-from sklearn.decomposition import PCA
-from sklearn.feature_selection import SelectKBest, f_classif
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import silhouette_score, calinski_harabasz_score
-from hmmlearn.hmm import GaussianHMM
-from scipy import stats
-
 warnings.filterwarnings('ignore')
+from loguru import logger
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelMetrics:
@@ -44,7 +18,19 @@ class ModelMetrics:
     calinski_harabasz_score: float
     converged: bool
     n_params: int
-
+@dataclass
+class MarketState:
+    """市场状态定义"""
+    state_id: int
+    label: str
+    description: str
+    mean_return: float
+    volatility: float
+    sharpe_ratio: float
+    max_drawdown: float
+    probability: float
+    avg_duration: float
+    risk_level: str
 # =============================================================================
 # 列名定义
 # =============================================================================
@@ -92,6 +78,7 @@ class ColumnNames:
     OC_SPREAD = 'oc_spread'
     OHLC_CENTER = 'ohlc_center'
     CLOSE_ZSCORE = 'close_zscore'
+    PRICE_ZSCORE_60 = 'price_zscore_60'
     
     # 成交量指标列名
     VOLUME_STD = 'volume_std'
@@ -174,19 +161,6 @@ class ColumnNames:
 # 市场状态定义
 # =============================================================================
 
-@dataclass
-class MarketState:
-    """市场状态定义"""
-    state_id: int
-    label: str
-    description: str
-    mean_return: float
-    volatility: float
-    sharpe_ratio: float
-    max_drawdown: float
-    probability: float
-    avg_duration: float
-    risk_level: str
 
 class MarketStates:
     """市场状态类型定义"""
@@ -195,7 +169,7 @@ class MarketStates:
     SIDEWAYS = "震荡市"
     BEAR = "熊市"
     HIGH_VOLATILITY = "高波动"
-    
+
     @classmethod
     def get_state_description(cls, state_type: str) -> str:
         """获取状态描述"""

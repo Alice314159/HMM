@@ -16,7 +16,7 @@ data:
   test_start: '2024-01-01'
   test_end: '2024-12-31'
 
-use_manual_features: true
+use_manual_features: false
 manual_features:
   - returns_5
   - Volume
@@ -41,46 +41,25 @@ manual_features:
 #  - momentum_stability_20
 
 #feature_engineer:
-#  returns:
-#    - returns_1
-#    - returns_5
-#    - returns_10
-#  technical_indicators:
-#    - sma_5
-#    - sma_10
-#    - sma_20
-#    - sma_30
-#  volatility_indicators:
-#    - std_dev
-#    - bollinger_bands
-#  volume_indicators:
-#    - sma_5
-#    - sma_10
-#    - sma_20
-#    - sma_30
-#  price_features:
-#    - Close
-#    - Open
-#    - High
-#    - Low
+
 #  pca_variance_ratio: 0.95
 #
-#feature_selection_config:
-#  enable: true
-#  n_features: 10
-#  methods:
-#    - f_test
-#    - mutual_info
-#    - random_forest
-#    - pca
-#    - correlation
+feature_selection_config:
+  enable: true
+  n_features: 10
+  methods:
+    - f_test
+    - mutual_info
+    - random_forest
+    - pca
+    - correlation
 
 trainer:
   n_states: 3
   n_components: 4
   covariance_type: full
   n_iter: 100
-  tol: 1e-2
+  tol: 0.01
   verbose: 2
   n_jobs: -1
   max_iter: 300
@@ -89,7 +68,14 @@ trainer:
 
 
 output:
-  model_path: 'models/hmm_pipeline'
-  report_path: 'output/analysis_report.html'
-  feature_analysis_path: 'output/feature_analysis_report.txt'
-  emission_matrix_path: 'output/emission_matrix_report.html'
+  model_path: '../models/hmm_pipeline.pkl'
+  scalar_path: '../models/scaler.pkl'
+  feature_selection_path: '../models/feature_selection.pkl'
+  pca_path: '../models/pca_model.pkl'
+
+
+  feature_analysis_path: '../output/feature_analysis_report.txt'
+  emission_matrix_path: '../output/emission_matrix_report.html'
+  train_report_path: '../output/train_report.html'
+  test_report_path: '../output/test_report.html'
+

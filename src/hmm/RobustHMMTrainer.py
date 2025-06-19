@@ -2,30 +2,49 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple,Any
 from sklearn.metrics import silhouette_score, calinski_harabasz_score
 from hmmlearn.hmm import GaussianHMM
-from basicDefination import ModelMetrics
+from src.utils.basicDefination import ModelMetrics
+from src.utils.configLoader import HMMConfigReader
 warnings.filterwarnings('ignore')
 from loguru import logger
 
 class RobustHMMTrainer:
     """鲁棒的HMM训练器"""
     
-    def __init__(self, config: Dict):
-        self.n_states = config.get('n_states', 6)
+    def __init__(self, config:HMMConfigReader):
+
+        train_config = config.get_trainer_config()
         self.max_attempts = 20
         self.random_state = 42
-        self.k_range = config.get('k_range', range(5, 41, 5))
-        self.state_range = config.get('state_range', range(2, 11))  # 状态数范围
+        self.n_states = train_config.get('n_states', 5)  # 默认状态数
+        self.k_range = train_config.get('k_range', range(5, 41, 5))
+        self.state_range = train_config.get('state_range', range(2, 11))  # 状态数范围
+
+        self.aic_bic_path = config.output.aic_bic_path
 
     def predict(self, X: np.ndarray, model: GaussianHMM) -> np.ndarray:
         """使用模型进行预测"""
         return model.predict(X)
+
+    def save_model(self, model: GaussianHMM, path: str):
+        """保存HMM模型"""
+        import joblib
+        joblib.dump(model, path)
+        logger.info(f"HMM模型已保存到 {path}")
+
+    def load_model(self, path: str) -> GaussianHMM:
+        """加载HMM模型"""
+        import joblib
+        model = joblib.load(path)
+        logger.info(f"HMM模型已从 {path} 加载")
+        return model
     
     def train(self, X: np.ndarray) -> Tuple[GaussianHMM, np.ndarray, ModelMetrics]:
         """训练HMM模型"""
         logger.info(f"开始训练 {self.n_states} 状态的HMM模型...")
+        logger.info(f"数据形状: {X.shape}")
         
         best_model = None
         best_states = None
@@ -69,7 +88,11 @@ class RobustHMMTrainer:
                 metrics = self._calculate_metrics(model, X_stable, states)
                 
                 logger.info(f"尝试 {attempt + 1}: 分数={score:.4f}, 收敛={metrics.converged}, "
-                           f"轮廓系数={metrics.silhouette_score:.4f}")
+                           f"轮廓系数={metrics.silhouette_score:.4f},"
+                            f" Calinski-Harabasz={metrics.calinski_harabasz_score:.4f}, "
+                            f"AIC={metrics.aic:.4f}, BIC={metrics.bic:.4f}, "
+                            f"参数数量={metrics.n_params}")
+
                 
                 # 选择最佳模型 - 放宽条件
                 if (score > best_score and metrics.converged):  # 只要求收敛和分数更高
@@ -77,6 +100,7 @@ class RobustHMMTrainer:
                     best_states = states
                     best_metrics = metrics
                     best_score = score
+                    logger.info(f"新最佳模型找到: 尝试 {attempt + 1}, 分数={score:.4f}")
                 
                 history.append({'params': params, 'aic': metrics.aic, 'bic': metrics.bic, 'converged': metrics.converged})
                 
@@ -94,7 +118,9 @@ class RobustHMMTrainer:
         plt.plot(df_hist['aic'], label='AIC')
         plt.plot(df_hist['bic'], label='BIC')
         plt.legend()
-        plt.savefig('output/aic_bic_history.png')
+        plt.savefig(self.aic_bic_path)
+
+
         
         return best_model, best_states, best_metrics
     
