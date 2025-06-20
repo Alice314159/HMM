@@ -45,10 +45,15 @@ class ImprovedHMMPipelineCls:
         original_df = self.load_data()
 
         # Split data by time
-        train_df, _,_ = self.split_data_by_time(original_df, cutoff_date)
+        train_df, valid_df,_ = self.split_data_by_time(original_df, cutoff_date)
 
         # Compute features for training and testing data
         X_train, feature_names,index = self.feature_engineer.fit_transform(train_df)
+
+        # valid data
+        self.feature_engineer.transform(valid_df)
+
+
 
         return X_train, feature_names,train_df,index
 
