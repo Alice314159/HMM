@@ -45,10 +45,11 @@ class ImprovedHMMPipelineCls:
         original_df = self.load_data()
 
         # Split data by time
-        train_df, _ = self.split_data_by_time(original_df, cutoff_date)
+        train_df, _,_ = self.split_data_by_time(original_df, cutoff_date)
 
         # Compute features for training and testing data
         X_train, feature_names,index = self.feature_engineer.fit_transform(train_df)
+
         return X_train, feature_names,train_df,index
 
 
@@ -60,7 +61,7 @@ class ImprovedHMMPipelineCls:
         original_df = self.load_data()
 
         # Split data by time
-        _, test_df = self.split_data_by_time(original_df, cutoff_date)
+        _,_, test_df = self.split_data_by_time(original_df, cutoff_date)
 
         self.feature_engineer.load_pipeline(self.config.output.model_path)
 
@@ -84,17 +85,26 @@ class ImprovedHMMPipelineCls:
         """Split data by time into training and testing sets"""
         logger.info("Splitting data by time...")
 
-        cutoff1 = pd.Timestamp('2017-01-01')
-        cutoff = pd.Timestamp(cutoff_date)
-        test_cutoff = pd.Timestamp(cutoff_date) - pd.Timedelta(days=45)
+        train_start = pd.Timestamp(self.config.data.train_start)
+        train_end = pd.Timestamp(self.config.data.train_end)
 
-        train_df = df[(df.index < cutoff) & (df.index >= cutoff1)].copy()
-        test_df = df[df.index >= test_cutoff].copy()
+        valid_start = pd.Timestamp(self.config.data.valid_start)-pd.Timedelta(days=45)
+        valid_end = pd.Timestamp(self.config.data.valid_end)
+
+        test_start = pd.Timestamp(self.config.data.test_start)-pd.Timedelta(days=45)
+        test_end = pd.Timestamp(self.config.data.test_end)
+
+
+
+        train_df = df[(df.index <= train_end) & (df.index >= train_start)].copy()
+        test_df = df[(df.index <= test_end) & (df.index >= test_start)].copy()
+        valid_df = df[(df.index <= valid_end) & (df.index >= valid_start)].copy()
+
 
         logger.info(f"Training data: {len(train_df)} records ({train_df.index.min()} to {train_df.index.max()})")
         logger.info(f"Testing data: {len(test_df)} records ({test_df.index.min()} to {test_df.index.max()})")
 
-        return train_df, test_df
+        return train_df,valid_df, test_df
 
 
     def train_hmm_model(self, X_train: np.ndarray) -> None:

@@ -28,8 +28,7 @@ def run_test(config:HMMConfigReader):
     # 创建并运行改进的HMM管道
     pipeline = ImprovedHMMPipelineCls(config)
 
-
-
+    # Prepare testing data
     X_test, feature_names,test_df,index = pipeline.prepare_testing_data()
 
     test_nstate = pipeline.predict_states(X_test)

@@ -11,6 +11,8 @@ class DataConfig:
     path: str
     train_start: str
     train_end: str
+    valid_start: str
+    valid_end: str
     test_start: str
     test_end: str
 
@@ -24,8 +26,22 @@ class FeatureSelectionConfig:
 
 
 @dataclass
+# class TrainerConfig:
+#     """HMM trainer configuration parameters"""
+#     n_states: int = 3
+#     n_components: int = 4
+#     covariance_type: str = 'full'
+#     n_iter: int = 100
+#     tol: float = 0.01
+#     verbose: int = 2
+#     n_jobs: int = -1
+#     max_iter: int = 300
+#     k_range: List[int] = field(default_factory=lambda: [5, 10, 15, 20, 25, 30, 35, 40])
+#     state_range: List[int] = field(default_factory=lambda: [2, 3, 4, 5, 6, 7, 8, 9, 10])
 class TrainerConfig:
-    """HMM trainer configuration parameters"""
+    """Enhanced HMM trainer configuration parameters with optimization features"""
+
+    # Original HMM parameters
     n_states: int = 3
     n_components: int = 4
     covariance_type: str = 'full'
@@ -36,6 +52,185 @@ class TrainerConfig:
     max_iter: int = 300
     k_range: List[int] = field(default_factory=lambda: [5, 10, 15, 20, 25, 30, 35, 40])
     state_range: List[int] = field(default_factory=lambda: [2, 3, 4, 5, 6, 7, 8, 9, 10])
+
+    # New optimization parameters
+    selection_strategy: str = 'composite'  # 'aic', 'bic', 'composite', 'cross_validation', 'log_likelihood'
+    max_attempts: int = 20
+    early_stopping_patience: int = 5
+    min_improvement: float = 0.001
+    use_cross_validation: bool = False
+    cv_folds: int = 3
+
+    # Composite scoring weights (for selection_strategy='composite')
+    score_weights: Dict[str, float] = field(default_factory=lambda: {
+        'log_likelihood': 0.3,
+        'aic': -0.2,  # Negative because lower is better
+        'bic': -0.2,  # Negative because lower is better
+        'silhouette': 0.15,
+        'calinski_harabasz': 0.1,
+        'stability': 0.05
+    })
+
+    # Advanced training parameters
+    use_progressive_training: bool = True
+    use_data_stabilization: bool = True
+    min_state_proportion: float = 0.01  # Minimum proportion of samples per state
+    normalize_features: bool = False  # Whether to normalize features in later attempts
+
+    # Validation parameters
+    validate_model_quality: bool = True
+    require_convergence: bool = True
+    min_unique_states: int = 2
+
+    # Parallel processing
+    use_parallel_training: bool = False
+    parallel_jobs: int = -1
+
+    # Reproducibility
+    random_seed: int = 42
+    set_random_state: bool = True
+
+    def __post_init__(self):
+        """Validate configuration parameters after initialization"""
+        self._validate_config()
+
+    def _validate_config(self):
+        """Validate configuration parameters"""
+        # Validate selection strategy
+        valid_strategies = ['aic', 'bic', 'composite', 'cross_validation', 'log_likelihood']
+        if self.selection_strategy not in valid_strategies:
+            raise ValueError(f"selection_strategy must be one of {valid_strategies}")
+
+        # Validate ranges
+        if not self.state_range:
+            raise ValueError("state_range cannot be empty")
+        if min(self.state_range) < 2:
+            raise ValueError("Minimum number of states must be at least 2")
+
+        # Validate weights for composite strategy
+        if self.selection_strategy == 'composite':
+            if not self.score_weights:
+                raise ValueError("score_weights cannot be empty for composite strategy")
+
+            # Ensure all required weights are present
+            required_weights = ['log_likelihood', 'aic', 'bic', 'silhouette', 'calinski_harabasz', 'stability']
+            missing_weights = set(required_weights) - set(self.score_weights.keys())
+            if missing_weights:
+                raise ValueError(f"Missing score weights: {missing_weights}")
+
+        # Validate cross-validation parameters
+        if self.use_cross_validation and self.cv_folds < 2:
+            raise ValueError("cv_folds must be at least 2 for cross-validation")
+
+        # Validate numerical parameters
+        if self.early_stopping_patience < 1:
+            raise ValueError("early_stopping_patience must be at least 1")
+        if self.min_improvement < 0:
+            raise ValueError("min_improvement must be non-negative")
+        if self.min_state_proportion <= 0 or self.min_state_proportion >= 1:
+            raise ValueError("min_state_proportion must be between 0 and 1")
+
+    def get_hmm_params(self) -> Dict:
+        """Get standard HMM parameters for model initialization"""
+        return {
+            'n_components': self.n_components,
+            'covariance_type': self.covariance_type,
+            'n_iter': self.n_iter,
+            'tol': self.tol,
+            'verbose': self.verbose,
+            'random_state': self.random_seed if self.set_random_state else None
+        }
+
+    def get_optimization_params(self) -> Dict:
+        """Get optimization-specific parameters"""
+        return {
+            'selection_strategy': self.selection_strategy,
+            'max_attempts': self.max_attempts,
+            'early_stopping_patience': self.early_stopping_patience,
+            'min_improvement': self.min_improvement,
+            'use_cross_validation': self.use_cross_validation,
+            'cv_folds': self.cv_folds,
+            'score_weights': self.score_weights.copy(),
+            'use_progressive_training': self.use_progressive_training,
+            'use_data_stabilization': self.use_data_stabilization,
+            'min_state_proportion': self.min_state_proportion,
+            'normalize_features': self.normalize_features,
+            'validate_model_quality': self.validate_model_quality,
+            'require_convergence': self.require_convergence,
+            'min_unique_states': self.min_unique_states
+        }
+
+    def to_dict(self) -> Dict:
+        """Convert configuration to dictionary"""
+        return {
+            'n_states': self.n_states,
+            'n_components': self.n_components,
+            'covariance_type': self.covariance_type,
+            'n_iter': self.n_iter,
+            'tol': self.tol,
+            'verbose': self.verbose,
+            'n_jobs': self.n_jobs,
+            'max_iter': self.max_iter,
+            'k_range': self.k_range,
+            'state_range': self.state_range,
+            'selection_strategy': self.selection_strategy,
+            'max_attempts': self.max_attempts,
+            'early_stopping_patience': self.early_stopping_patience,
+            'min_improvement': self.min_improvement,
+            'use_cross_validation': self.use_cross_validation,
+            'cv_folds': self.cv_folds,
+            'score_weights': self.score_weights,
+            'use_progressive_training': self.use_progressive_training,
+            'use_data_stabilization': self.use_data_stabilization,
+            'min_state_proportion': self.min_state_proportion,
+            'normalize_features': self.normalize_features,
+            'validate_model_quality': self.validate_model_quality,
+            'require_convergence': self.require_convergence,
+            'min_unique_states': self.min_unique_states,
+            'use_parallel_training': self.use_parallel_training,
+            'parallel_jobs': self.parallel_jobs,
+            'random_seed': self.random_seed,
+            'set_random_state': self.set_random_state
+        }
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict) -> 'TrainerConfig':
+        """Create configuration from dictionary"""
+        # Handle potential missing keys by using defaults
+        filtered_dict = {}
+        for field_name, field_def in cls.__dataclass_fields__.items():
+            if field_name in config_dict:
+                filtered_dict[field_name] = config_dict[field_name]
+            elif field_def.default is not dataclass.MISSING:
+                filtered_dict[field_name] = field_def.default
+            elif field_def.default_factory is not dataclass.MISSING:
+                filtered_dict[field_name] = field_def.default_factory()
+
+        return cls(**filtered_dict)
+
+    def update_score_weights(self, new_weights: Dict[str, float]):
+        """Update score weights for composite strategy"""
+        self.score_weights.update(new_weights)
+        self._validate_config()
+
+    def get_parameter_grid(self) -> List[Dict]:
+        """Get parameter grid for grid search"""
+        base_params = [
+            {'covariance_type': 'diag', 'n_iter': 100, 'tol': 1e-3, 'algorithm': 'viterbi'},
+            {'covariance_type': 'diag', 'n_iter': 200, 'tol': 1e-4, 'algorithm': 'viterbi'},
+            {'covariance_type': 'tied', 'n_iter': 150, 'tol': 1e-3, 'algorithm': 'viterbi'},
+            {'covariance_type': 'spherical', 'n_iter': 100, 'tol': 1e-3, 'algorithm': 'viterbi'},
+            {'covariance_type': 'full', 'n_iter': 200, 'tol': 1e-4, 'algorithm': 'viterbi'},
+        ]
+
+        # Add advanced parameters if progressive training is enabled
+        if self.use_progressive_training:
+            base_params.extend([
+                {'covariance_type': 'diag', 'n_iter': 300, 'tol': 1e-5, 'algorithm': 'baum-welch'},
+                {'covariance_type': 'tied', 'n_iter': 250, 'tol': 1e-4, 'algorithm': 'baum-welch'},
+            ])
+
+        return base_params
 
 
 @dataclass
