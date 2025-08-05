@@ -31,7 +31,7 @@ class OptimizedDataLoader:
         logger.info(f"原始数据列名: {list(df.columns)}")
         
         # 自动检测并设置日期索引
-        date_columns = ['Date', 'date', 'timestamp', 'time', 'DateTime', 'DATE', '日期', '时间']
+        date_columns = ['Date', 'trade_date','date', 'timestamp', 'time', 'DateTime', 'DATE', '日期', '时间']
         date_col = next((col for col in date_columns if col in df.columns), None)
         
         if date_col:

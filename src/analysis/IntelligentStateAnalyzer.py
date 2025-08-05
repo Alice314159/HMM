@@ -3,17 +3,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
-from typing import  List,  Tuple
+from typing import List, Tuple
 
 import os
 
 from hmmlearn.hmm import GaussianHMM
 from src.utils.basicDefination import MarketState
 from loguru import logger
+
 warnings.filterwarnings('ignore')
 
-class IntelligentStateAnalyzer:
 
+class IntelligentStateAnalyzer:
     # 统一的状态颜色映射，参考用户示例
     STATE_COLOR_MAP = {
         '深度熊市': '#006400',
@@ -32,8 +33,8 @@ class IntelligentStateAnalyzer:
         '强牛市': '#FF8C00',
         '其它': '#CCCCCC'
     }
-    
-    def __init__(self, model: GaussianHMM, states: np.ndarray, X: np.ndarray, 
+
+    def __init__(self, model: GaussianHMM, states: np.ndarray, X: np.ndarray,
                  feature_names: List[str], index: pd.Index, df: pd.DataFrame):
         """初始化智能状态分析器
         :param model: 训练好的HMM模型
@@ -51,9 +52,9 @@ class IntelligentStateAnalyzer:
         self.df = df
         self.n_states = model.n_components
         self.market_states = {}
-        
+
         self._analyze_states()
-    
+
     def _max_drawdown(self, series):
         running_max = np.maximum.accumulate(series)
         drawdown = (series - running_max) / running_max
@@ -74,7 +75,7 @@ class IntelligentStateAnalyzer:
                 # 如果找不到Close列，使用第一个特征作为替代
                 logger.warning("未找到'Close'列，使用第一个特征作为替代")
                 all_returns = self.X[:, 0]
-        
+
         # 确保所有可能的状态都被分析
         unique_states = np.unique(self.states)
         for state_id in range(self.n_states):
@@ -94,24 +95,24 @@ class IntelligentStateAnalyzer:
                     risk_level="未知"
                 )
                 continue
-                
+
             state_returns = all_returns[state_mask]
-            
+
             # 限制极端收益
             state_returns = np.clip(state_returns, -0.1, 0.1)
-            
+
             # 计算基本统计量
             mean_return = np.mean(state_returns)
             volatility = np.std(state_returns)
-            
+
             # 计算年化指标
             annual_return = mean_return * 252  # 简单年化
             annual_vol = volatility * np.sqrt(252)
-            
+
             # 计算夏普比率
             risk_free_rate = 0.03  # 假设无风险利率为3%
             sharpe_ratio = (annual_return - risk_free_rate) / (annual_vol + 1e-8)
-            
+
             # 计算最大回撤
             indices = np.where(state_mask)[0]
             segments = np.split(indices, np.where(np.diff(indices) != 1)[0] + 1)
@@ -124,17 +125,17 @@ class IntelligentStateAnalyzer:
                 cum = np.cumprod(1 + safe_returns)
                 mdds.append(self._max_drawdown(cum))
             max_drawdown = np.mean(mdds) if mdds else 0
-            
+
             # 其他统计量
             durations = self._get_state_durations(state_id)
             avg_duration = np.mean(durations) if durations else 0
             probability = np.sum(state_mask) / len(self.states)
-            
+
             # 状态分类
             label, description, risk_level = self._classify_state(
                 state_returns, mean_return, volatility, sharpe_ratio, max_drawdown
             )
-            
+
             self.market_states[state_id] = MarketState(
                 state_id=state_id,
                 label=label,
@@ -147,9 +148,9 @@ class IntelligentStateAnalyzer:
                 avg_duration=avg_duration,
                 risk_level=risk_level
             )
-    
-    def _classify_state(self, state_returns: np.ndarray, mean_return: float, volatility: float, 
-                       sharpe_ratio: float, max_drawdown: float) -> Tuple[str, str, str]:
+
+    def _classify_state(self, state_returns: np.ndarray, mean_return: float, volatility: float,
+                        sharpe_ratio: float, max_drawdown: float) -> Tuple[str, str, str]:
         """智能状态分类（适配高波动数据）"""
         annual_return = mean_return * 252
         annual_vol = volatility * np.sqrt(252)
@@ -185,12 +186,12 @@ class IntelligentStateAnalyzer:
         else:
             logger.info("分类为: 其它")
             return "其它", "未能归入其他类别", "中性"
-    
+
     def _get_state_durations(self, state_id: int) -> List[int]:
         """获取状态持续时间"""
         durations = []
         current_duration = 0
-        
+
         for s in self.states:
             if s == state_id:
                 current_duration += 1
@@ -198,12 +199,12 @@ class IntelligentStateAnalyzer:
                 if current_duration > 0:
                     durations.append(current_duration)
                     current_duration = 0
-        
+
         if current_duration > 0:
             durations.append(current_duration)
-        
+
         return durations
-    
+
     def generate_report(self) -> str:
         """生成分析报告"""
         report = []
@@ -215,17 +216,17 @@ class IntelligentStateAnalyzer:
         report.append(f"状态数量: {self.n_states}")
         report.append(f"特征数量: {len(self.feature_names)}")
         report.append("")
-        
+
         report.append("各状态详细分析:")
         report.append("-" * 60)
-        
+
         for state in self.market_states.values():
             annual_return = (1 + state.mean_return) ** 252 - 1
             report.append(f"状态 {state.state_id}: {state.label}")
             report.append(f"  描述: {state.description}")
             report.append(f"  出现概率: {state.probability:.2%}")
             report.append(f"  平均收益率: {state.mean_return:.4f} ({annual_return:.2%} 年化)")
-            report.append(f"  波动率: {state.volatility:.4f} ({state.volatility*np.sqrt(252):.2%} 年化)")
+            report.append(f"  波动率: {state.volatility:.4f} ({state.volatility * np.sqrt(252):.2%} 年化)")
             report.append(f"  夏普比率: {state.sharpe_ratio:.3f}")
             report.append(f"  最大回撤: {state.max_drawdown:.2%}")
             report.append(f"  平均持续天数: {state.avg_duration:.1f}")
@@ -234,16 +235,15 @@ class IntelligentStateAnalyzer:
             if abs(annual_return) > 2:
                 report.append('  ⚠️ 年化收益率极端，可能样本过少或数据异常')
             report.append("")
-        
+
         return "\n".join(report)
 
-    
     def _plot_state_timeline(self, ax):
         """绘制状态时间序列"""
         colors = plt.cm.Set3(np.linspace(0, 1, self.n_states))
         state_series = pd.Series(self.states, index=self.index)
         close_prices = self.df.loc[self.index, 'Close']
-        
+
         # 确保所有状态都有对应的颜色和标签
         for state_id in range(self.n_states):
             mask = state_series == state_id
@@ -253,22 +253,22 @@ class IntelligentStateAnalyzer:
             state_prices = close_prices[mask]
             state_label = self.market_states[state_id].label if state_id in self.market_states else f"状态{state_id}"
             ax.scatter(state_dates, state_prices, c=[colors[state_id]],
-                      label=state_label, alpha=0.7, s=20)
-        
+                       label=state_label, alpha=0.7, s=20)
+
         ax.set_title('市场状态时间序列')
         ax.set_xlabel('日期')
         ax.set_ylabel('收盘价')
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         ax.grid(True, alpha=0.3)
-    
+
     def _plot_transition_matrix(self, ax):
         """绘制转移矩阵"""
-        sns.heatmap(self.model.transmat_, annot=True, fmt='.3f', cmap='Blues', 
-                   ax=ax, cbar_kws={'shrink': 0.8})
+        sns.heatmap(self.model.transmat_, annot=True, fmt='.3f', cmap='Blues',
+                    ax=ax, cbar_kws={'shrink': 0.8})
         ax.set_title('状态转移矩阵')
         ax.set_xlabel('转移到状态')
         ax.set_ylabel('来自状态')
-    
+
     def _plot_state_statistics(self, ax):
         states = list(self.market_states.keys())
         returns = [self.market_states[s].mean_return * 252 for s in states]
@@ -283,7 +283,7 @@ class IntelligentStateAnalyzer:
         ax.set_xticks(range(len(states)))
         ax.set_xticklabels([self.market_states[s].label for s in states])
         ax.grid(True, alpha=0.3)
-    
+
     def _plot_returns_distribution(self, ax):
         """绘制收益率分布"""
         returns = [self.market_states[s].mean_return * 252 for s in self.market_states.keys()]
@@ -291,7 +291,7 @@ class IntelligentStateAnalyzer:
         ax.set_title('各状态年化收益率分布')
         ax.set_xlabel('年化收益率')
         ax.legend()
-    
+
     def _plot_state_durations(self, ax):
         durations = [self.market_states[s].avg_duration for s in self.market_states.keys()]
         labels = [self.market_states[s].label for s in self.market_states.keys()]
@@ -302,16 +302,16 @@ class IntelligentStateAnalyzer:
         ax.set_xticks(range(len(self.market_states)))
         ax.set_xticklabels(labels)
         ax.legend()
-    
+
     def _plot_risk_return_scatter(self, ax):
         returns = [self.market_states[s].mean_return * 252 for s in self.market_states.keys()]
         vols = [self.market_states[s].volatility * np.sqrt(252) for s in self.market_states.keys()]
         scatter_colors = plt.cm.Set3(np.linspace(0, 1, self.n_states))
         scatter = ax.scatter(vols, returns, alpha=0.7, c=scatter_colors, s=100)
         legend_elements = [plt.Line2D([0], [0], marker='o', color='w',
-                                    markerfacecolor=scatter_colors[i],
-                                    label=self.market_states[i].label,
-                                    markersize=10) for i in range(self.n_states)]
+                                      markerfacecolor=scatter_colors[i],
+                                      label=self.market_states[i].label,
+                                      markersize=10) for i in range(self.n_states)]
         ax.legend(handles=legend_elements)
         ax.set_title('风险收益散点图')
         ax.set_xlabel('年化波动率')
@@ -393,7 +393,6 @@ class IntelligentStateAnalyzer:
         else:
             plt.savefig('output/risk_return_scatter.png')
 
-
     def _debug_transition_matrix_data(self):
         """调试转移矩阵数据"""
         logger.info("=== 转移矩阵调试信息 ===")
@@ -406,7 +405,6 @@ class IntelligentStateAnalyzer:
         logger.info(f"转移矩阵是否包含NaN: {np.isnan(self.model.transmat_).any()}")
         logger.info(f"转移矩阵是否包含Inf: {np.isinf(self.model.transmat_).any()}")
         logger.info("========================")
-
 
     def save_full_plotly_html_report(self, html_path='output/state_analysis_plotly_report.html'):
         """
@@ -426,7 +424,7 @@ class IntelligentStateAnalyzer:
             'close': self.df.loc[self.index, 'Close'].values,
             'state': [self.market_states.get(int(s), f"状态{int(s)}").label for s in self.states]
         })
-        
+
         color_map = {
             '牛市': '#FFD700',
             '熊市': '#1E90FF',
@@ -436,7 +434,7 @@ class IntelligentStateAnalyzer:
             '强牛市': '#FF8C00',
             '其它': '#CCCCCC'
         }
-        
+
         traces_timeline = []
         for state in df_plot['state'].unique():
             sub = df_plot[df_plot['state'] == state]
@@ -448,11 +446,11 @@ class IntelligentStateAnalyzer:
                     marker=dict(size=6, color=color_map.get(state, '#888')),
                     hovertemplate='日期: %{x}<br>收盘价: %{y}<br>状态: ' + state + '<extra></extra>'
                 ))
-        
+
         fig_timeline = go.Figure(traces_timeline)
         fig_timeline.update_layout(
-            title="市场状态时间序列", 
-            xaxis_title="日期", 
+            title="市场状态时间序列",
+            xaxis_title="日期",
             yaxis_title="收盘价",
             height=400
         )
@@ -460,7 +458,7 @@ class IntelligentStateAnalyzer:
         # 2. 状态转移矩阵 - 重点修复这部分
         transmat = self.model.transmat_.copy()
         n_components = self.model.n_components
-        
+
         # 确保转移矩阵数据有效
         if np.any(np.isnan(transmat)) or np.any(np.isinf(transmat)):
             logger.info("警告：转移矩阵包含无效值，进行清理...")
@@ -483,11 +481,11 @@ class IntelligentStateAnalyzer:
         logger.info("transmat.shape:", transmat.shape)
         logger.info("transmat min/max:", transmat.min(), transmat.max())
         logger.info("transmat是否包含极小值:", np.any(transmat < 1e-10))
-        
+
         # 处理极小值问题 - 这可能是导致显示为空的原因
         transmat_display = transmat.copy()
         transmat_display[transmat_display < 1e-10] = 0  # 将极小值设为0
-        
+
         # 创建自定义的文本标注
         text_annotations = []
         for i in range(transmat_display.shape[0]):
@@ -499,7 +497,7 @@ class IntelligentStateAnalyzer:
                 else:
                     text_row.append(f"{val:.3f}")
             text_annotations.append(text_row)
-        
+
         # 方法1：使用go.Heatmap with explicit text
         fig_heatmap = go.Figure(go.Heatmap(
             z=transmat_display,
@@ -514,7 +512,7 @@ class IntelligentStateAnalyzer:
             textfont={"size": 12, "color": "black"},
             hovertemplate='从 %{y} 到 %{x}: %{z:.3f}<extra></extra>'
         ))
-        
+
         fig_heatmap.update_layout(
             title="状态转移矩阵",
             xaxis_title="转移到状态",
@@ -529,18 +527,18 @@ class IntelligentStateAnalyzer:
         table_data = []
         table_data.append(['状态'] + labels)  # 表头
         for i, from_state in enumerate(labels):
-            row = [from_state] + [f"{transmat_display[i,j]:.3f}" for j in range(len(labels))]
+            row = [from_state] + [f"{transmat_display[i, j]:.3f}" for j in range(len(labels))]
             table_data.append(row)
-        
+
         fig_table = go.Figure(data=[go.Table(
             header=dict(values=table_data[0],
-                    fill_color='paleturquoise',
-                    align='center',
-                    font_size=12),
+                        fill_color='paleturquoise',
+                        align='center',
+                        font_size=12),
             cells=dict(values=list(zip(*table_data[1:])),
-                    fill_color='lavender',
-                    align='center',
-                    font_size=11))
+                       fill_color='lavender',
+                       align='center',
+                       font_size=11))
         ])
         fig_table.update_layout(title="状态转移矩阵（表格形式）", height=400)
 
@@ -548,11 +546,11 @@ class IntelligentStateAnalyzer:
         existing_states = [s for s in range(n_components) if s in self.market_states]
         if not existing_states:
             existing_states = list(self.market_states.keys())
-        
+
         labels_stats = [f"{self.market_states[s].label}({s})" for s in existing_states]
         returns = [self.market_states[s].mean_return * 252 for s in existing_states]
         vols = [self.market_states[s].volatility * np.sqrt(252) for s in existing_states]
-        
+
         fig_bar = go.Figure()
         fig_bar.add_trace(go.Bar(
             x=labels_stats,
@@ -716,56 +714,56 @@ class IntelligentStateAnalyzer:
         <body>
             <div class="container">
                 <h1>HMM 市场状态交互式分析报告（修复版V2）</h1>
-                
+
                 <div class="info-box">
                     <strong>分析期间:</strong> {self.index.min().strftime('%Y-%m-%d')} 至 {self.index.max().strftime('%Y-%m-%d')}<br>
                     <strong>总样本数:</strong> {len(self.states)}<br>
                     <strong>模型状态数:</strong> {self.n_states}<br>
                     <strong>实际状态数:</strong> {len(self.market_states)}
                 </div>
-                
+
                 {debug_info}
-                
+
                 <hr>
-                
+
                 <h2>📈 市场状态时间序列</h2>
                 <div class="chart-container">
                     {timeline_html}
                 </div>
-                
+
                 <h2>🔄 状态转移矩阵（热力图）</h2>
                 <div class="chart-container">
                     {heatmap_html}
                 </div>
-                
+
                 <h2>📋 状态转移矩阵（表格形式）</h2>
                 <div class="chart-container">
                     {table_html}
                 </div>
-                
+
                 <h2>📊 年化收益率与波动率</h2>
                 <div class="chart-container">
                     {bar_html}
                 </div>
-                
+
                 <h2>💼 风险收益散点图</h2>
                 <div class="chart-container">
                     {scatter_html}
                 </div>
-                
+
                 <h2>⏰ 各状态平均持续天数</h2>
                 <div class="chart-container">
                     {duration_html}
                 </div>
-                
+
                 <h2>📈 各状态年化收益率分布</h2>
                 <div class="chart-container">
                     {hist_html}
                 </div>
-                
+
                 <h2>📄 详细文本报告</h2>
                 {report_html}
-                
+
             </div>
         </body>
         </html>
@@ -775,14 +773,14 @@ class IntelligentStateAnalyzer:
         os.makedirs(os.path.dirname(html_path), exist_ok=True)
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
-        
+
         logger.info(f"修复版V2 Plotly交互式分析报告已保存到: {html_path}")
         logger.info("主要修复：")
         logger.info("1. 处理了转移矩阵中的极小值显示问题")
         logger.info("2. 添加了表格形式的转移矩阵作为备用显示")
         logger.info("3. 增加了详细的调试信息")
         logger.info("4. 改进了HTML结构和样式")
-        
+
         return html_path
 
     def generate_emission_matrix_report(self,
@@ -809,7 +807,8 @@ class IntelligentStateAnalyzer:
                 self.feature_names = self.feature_names[:emission_matrix.shape[1]]
             # 如果特征名称不足，添加占位符
             else:
-                self.feature_names.extend([f'Feature_{i}' for i in range(len(self.feature_names), emission_matrix.shape[1])])
+                self.feature_names.extend(
+                    [f'Feature_{i}' for i in range(len(self.feature_names), emission_matrix.shape[1])])
 
         # 创建HTML报告
         html_content = []
@@ -923,8 +922,10 @@ class IntelligentStateAnalyzer:
             min_var_idx = np.argmin(variances)
 
             html_content.append('<h4>方差分析</h4>')
-            html_content.append(f'<p>最大方差特征: {self.feature_names[max_var_idx]} ({variances[max_var_idx]:.4f})</p>')
-            html_content.append(f'<p>最小方差特征: {self.feature_names[min_var_idx]} ({variances[min_var_idx]:.4f})</p>')
+            html_content.append(
+                f'<p>最大方差特征: {self.feature_names[max_var_idx]} ({variances[max_var_idx]:.4f})</p>')
+            html_content.append(
+                f'<p>最小方差特征: {self.feature_names[min_var_idx]} ({variances[min_var_idx]:.4f})</p>')
 
             html_content.append('</div>')
             html_content.append('</div>')

@@ -83,6 +83,7 @@ class ImprovedHMMPipelineCls:
 
     def load_data(self) -> pd.DataFrame:
         loader = OptimizedDataLoader()
+        file_path = self.config.get_raw_data_path()
         original_df = loader.load_data(self.config.get_raw_data_path())
         return original_df
 

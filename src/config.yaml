@@ -10,7 +10,7 @@ pca_variance_ratio: 0.95  # 可设置为整数 或 float(如0.95)，表示保留
 pca_components: null  # 可设置为整数 或 float(如0.95)，表示保留的PCA方差比
 
 data:
-  path: "E:/VesperDecimal/data/raw/indexData/HS300_daily_kline.csv"
+  path: "E:\\Vesper\\data_downloader\\data\\raw\\indexData\\HS300_daily_kline.csv"
   train_start: '2017-01-01'
   train_end: '2023-12-31'
   valid_start: '2024-01-01'

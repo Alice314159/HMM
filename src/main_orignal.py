@@ -11,6 +11,7 @@ def run_train(config: HMMConfigReader):
     X_train, feature_names,train_df,index = pipeline.prepare_training_data()
     # Train HMM model on training data
     pipeline.train_hmm_model(X_train)
+    
     # 创建并运行智能状态分析器
     analyzer = IntelligentStateAnalyzer(pipeline.hmm_model, pipeline.train_states,X_train, feature_names, index,train_df)
     analyzer.save_full_plotly_html_report(config.output.train_report_path)
